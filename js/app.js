@@ -1,6 +1,4 @@
-// ===== MFX Admin App =====
 const API = 'https://mrmomd-production.up.railway.app/api';
-
 
 function toast(msg) {
   let t = document.querySelector('.toast');
@@ -106,6 +104,94 @@ async function loadAdminDashboard() {
       });
     }
   } catch (e) {}
+}
+
+// Units / Courses
+async function loadUnitsPage() {
+  loadUnitsList();
+}
+
+async function loadUnitsList() {
+  try {
+    const res = await api('/units');
+    const units = res && res.data ? res.data : [];
+    const wrap = document.getElementById('units-list');
+    if (!wrap) return;
+    if (!units.length) {
+      wrap.innerHTML = '<p style="color:var(--text-muted);">لا توجد كورسات لسه — دوس "كورس جديد" عشان تضيف أول كورس.</p>';
+      return;
+    }
+    units.sort((a, b) => (parseFloat(a.order) || 0) - (parseFloat(b.order) || 0));
+    wrap.innerHTML = units.map(u => `
+      <div class="card">
+        <div class="card-body">
+          <span class="badge ${u.status === 'published' ? 'badge-ok' : 'badge-warn'}">${u.status === 'published' ? '✓ منشور' : (u.status === 'hidden' ? 'مخفي' : 'مسودة')}</span>
+          <h3 style="margin-top:12px;">${escapeHtmlAdmin(u.title)}</h3>
+          <p>${escapeHtmlAdmin(u.description || 'بدون وصف')}</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${u.status === 'published'
+              ? `<button class="btn btn-secondary btn-sm" onclick="hideUnit('${u.id}')">🙈 إخفاء</button>`
+              : `<button class="btn btn-primary btn-sm" onclick="publishUnit('${u.id}')">🚀 نشر</button>`}
+            <button class="btn btn-danger btn-sm" onclick="deleteUnit('${u.id}')">🗑 حذف</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+function openAddUnitForm() {
+  document.getElementById('unit-form-wrap').style.display = 'block';
+}
+function closeAddUnitForm() {
+  document.getElementById('unit-form-wrap').style.display = 'none';
+  document.getElementById('unit-title').value = '';
+  document.getElementById('unit-description').value = '';
+}
+
+async function saveUnit() {
+  const title = document.getElementById('unit-title')?.value.trim();
+  const description = document.getElementById('unit-description')?.value.trim();
+  if (!title) { toast('❌ اكتب عنوان الكورس'); return; }
+  try {
+    const res = await api('/units', {
+      method: 'POST',
+      body: JSON.stringify({ title, description })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الكورس (مسودة — دوس نشر عشان يظهر للطلاب)');
+      closeAddUnitForm();
+      loadUnitsList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الكورس'));
+    }
+  } catch (e) {}
+}
+
+async function publishUnit(id) {
+  try {
+    const res = await api('/units/' + id + '/publish', { method: 'POST' });
+    if (res && res.ok) { toast('✅ الكورس بقى منشور للطلاب'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+async function hideUnit(id) {
+  try {
+    const res = await api('/units/' + id + '/hide', { method: 'POST' });
+    if (res && res.ok) { toast('✅ تم إخفاء الكورس'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+async function deleteUnit(id) {
+  if (!confirm('حذف الكورس هيمسح كل الفيديوهات والامتحانات جواه كمان. متأكد؟')) return;
+  try {
+    const res = await api('/units/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف الكورس'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+function escapeHtmlAdmin(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // Codes
@@ -499,6 +585,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const path = location.pathname;
   if (path.includes('login.html')) return;
   if (path.includes('index.html')) loadAdminDashboard();
+  if (path.includes('units.html')) loadUnitsPage();
   if (path.includes('codes.html')) loadCodesPage();
   if (path.includes('students.html')) loadStudentsPage();
   if (path.includes('exams.html')) loadExamsPage();

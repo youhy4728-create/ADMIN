@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الكورسات | MFX Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <aside class="dash-sidebar">
+    <div class="logo" style="margin-bottom:32px; padding:0 8px;">
+      <div class="logo-mark">👨‍🏫</div>
+      <span class="text-gradient">MFX Admin</span>
+    </div>
+    <nav>
+      <a href="index.html" class="dash-nav-item"><span>📊</span> لوحة التحكم</a>
+      <a href="units.html" class="dash-nav-item active"><span>🎓</span> الكورسات</a>
+      <a href="codes.html" class="dash-nav-item"><span>🎫</span> توليد الأكواد</a>
+      <a href="students.html" class="dash-nav-item"><span>👥</span> الطلاب</a>
+      <a href="exams.html" class="dash-nav-item"><span>📝</span> النتائج والامتحانات</a>
+      <a href="presentations.html" class="dash-nav-item"><span>📊</span> العروض التقديمية</a>
+      <a href="chat.html" class="dash-nav-item"><span>💬</span> المحادثات</a>
+      <a href="#" class="dash-nav-item" onclick="logout()" style="margin-top:auto; color:var(--danger);"><span>🚪</span> خروج</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <div style="margin-bottom:32px; display:flex; justify-content:space-between; align-items:flex-start;">
+      <div>
+        <h1 style="font-size:1.6rem;">🎓 الكورسات</h1>
+        <p style="color:var(--text-secondary); margin-top:4px;">أضف كورسات جديدة وتحكم في ظهورها للطلاب</p>
+      </div>
+      <button class="btn btn-primary" onclick="openAddUnitForm()">➕ كورس جديد</button>
+    </div>
+
+    <div id="unit-form-wrap" style="display:none; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:32px; margin-bottom:32px;">
+      <div class="form-group">
+        <label>عنوان الكورس</label>
+        <input type="text" class="inp" id="unit-title" placeholder="مثال: الوحدة الأولى - الفيزياء">
+      </div>
+      <div class="form-group">
+        <label>الوصف (اختياري)</label>
+        <textarea class="inp" id="unit-description" rows="3" placeholder="وصف قصير للكورس"></textarea>
+      </div>
+      <div style="display:flex; gap:12px;">
+        <button class="btn btn-primary" onclick="saveUnit()">💾 حفظ الكورس</button>
+        <button class="btn btn-secondary" onclick="closeAddUnitForm()">إلغاء</button>
+      </div>
+    </div>
+
+    <div id="units-list" class="grid-3">
+      <div class="skel" style="height:180px;"></div>
+      <div class="skel" style="height:180px;"></div>
+      <div class="skel" style="height:180px;"></div>
+    </div>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
