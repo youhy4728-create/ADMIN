@@ -1,6 +1,7 @@
 // ===== MFX Admin App =====
 const API = 'https://mrmomd-production.up.railway.app/api';
 
+
 function toast(msg) {
   let t = document.querySelector('.toast');
   if (t) t.remove();
@@ -109,52 +110,60 @@ async function loadAdminDashboard() {
 
 // Codes
 async function loadCodesPage() {
-  // Load courses dropdown
-  try {
-    const data = await api('/units');
-    const select = document.getElementById('code-course');
-    if (select && data.courses) {
-      select.innerHTML = '<option value="">اختر الكورس</option>' + 
-        data.courses.map(c => `<option value="${c.id}">${c.title}</option>`).join('');
-    }
-    loadCodesList();
-  } catch (e) {}
+  loadCodesList();
 }
 
 async function loadCodesList() {
   try {
-    const data = await api('/codes');
+    const res = await api('/codes');
+    const codes = res && res.data ? res.data : [];
     const tbody = document.getElementById('codes-table');
     if (!tbody) return;
-    if (!data.codes || !data.codes.length) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">لا توجد أكواد</td></tr>';
+    if (!codes.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">لا توجد أكواد</td></tr>';
       return;
     }
-    tbody.innerHTML = data.codes.map(c => `
+    tbody.innerHTML = codes.map(c => `
       <tr>
         <td style="font-family:monospace; font-weight:600; color:var(--accent-light);">${c.code}</td>
-        <td>${c.courseTitle || '—'}</td>
-        <td><span class="badge ${c.used ? 'badge-ok' : 'badge-info'}">${c.used ? '✓ مستخدم' : 'متاح'}</span></td>
-        <td>${c.createdAt || '—'}</td>
-        <td>${c.expiresAt || '—'}</td>
+        <td>${c.unitId ? 'كورس محدد' : 'كل الكورسات'}</td>
+        <td><span class="badge ${c.status === 'active' ? 'badge-ok' : 'badge-info'}">${c.status === 'active' ? '✓ مستخدم' : 'متاح'}</span></td>
+        <td>${c.studentName || '—'}</td>
+        <td>${c.activationDate ? new Date(c.activationDate).toLocaleDateString('ar-EG') : '—'}</td>
+        <td><button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="deleteCode('${c.id}')">🗑 حذف</button></td>
       </tr>
     `).join('');
   } catch (e) {}
 }
 
 async function generateCodes() {
-  const courseId = document.getElementById('code-course')?.value;
   const count = document.getElementById('code-count')?.value;
-  const expiry = document.getElementById('code-expiry')?.value;
-  if (!courseId) { toast('❌ اختر الكورس'); return; }
+  const prefix = document.getElementById('code-prefix')?.value.trim();
   toast('⏳ جاري توليد الأكواد...');
   try {
-    await api('/codes/generate', {
+    const res = await api('/codes/generate', {
       method: 'POST',
-      body: JSON.stringify({ courseId, count: parseInt(count) || 10, expiryDays: parseInt(expiry) || 30 })
+      body: JSON.stringify({ count: parseInt(count) || 10, prefix: prefix || undefined })
     });
-    toast('✅ تم توليد الأكواد');
-    loadCodesList();
+    if (res && res.ok) {
+      toast('✅ تم توليد الأكواد');
+      loadCodesList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل توليد الأكواد'));
+    }
+  } catch (e) {}
+}
+
+async function deleteCode(id) {
+  if (!confirm('متأكد إنك عايز تحذف الكود ده؟')) return;
+  try {
+    const res = await api('/codes/' + id, { method: 'DELETE' });
+    if (res && res.ok) {
+      toast('✅ تم حذف الكود');
+      loadCodesList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل حذف الكود'));
+    }
   } catch (e) {}
 }
 
