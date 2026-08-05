@@ -1,5 +1,5 @@
 // ===== MFX Admin App =====
-const API_BASE = 'https://mrmomd-production.up.railway.app/api';
+const API = 'https://mrmomd-production.up.railway.app/api';
 
 function toast(msg) {
   let t = document.querySelector('.toast');
