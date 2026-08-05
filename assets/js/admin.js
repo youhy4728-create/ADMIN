@@ -1,584 +1,792 @@
-const shell = document.getElementById('shell');
-const loginScreen = document.getElementById('loginScreen');
-const sidebar = document.getElementById('sidebar');
-const app = document.getElementById('app');
+/* =========================================================
+   Mamdouh Fakhry Platform — Admin Dashboard App
+   ========================================================= */
 
 const NAV = [
-  ['#/dashboard', '📊 لوحة القيادة'],
-  ['#/units', '📚 الوحدات'],
-  ['#/codes', '🔑 أكواد الطلاب'],
-  ['#/students', '👨‍🎓 الطلاب'],
-  ['#/rankings', '🏆 الترتيب'],
-  ['#/analytics', '📈 التحليلات'],
-  ['#/reports', '📄 التقارير'],
-  ['#/notifications', '🔔 الإشعارات'],
-  ['#/settings', '⚙️ الإعدادات']
+  { key: 'dashboard', label: 'الرئيسية', icon: '🏠' },
+  { key: 'units', label: 'الكورسات (Units)', icon: '📚' },
+  { key: 'students', label: 'الطلاب', icon: '👥' },
+  { key: 'codes', label: 'أكواد الدخول', icon: '🔑' },
+  { key: 'analytics', label: 'الإحصائيات والتقارير', icon: '📊' },
+  { key: 'settings', label: 'الإعدادات', icon: '⚙️' }
 ];
 
-function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function loading() { app.innerHTML = `<div class="spinner"></div>`; }
+const state = { route: parseHash(), unitsCache: [] };
 
-window.addEventListener('hashchange', router);
-window.addEventListener('DOMContentLoaded', router);
+function parseHash() {
+  const h = location.hash.replace(/^#\/?/, '');
+  const parts = h.split('/').filter(Boolean);
+  return { name: parts[0] || 'dashboard', params: parts.slice(1) };
+}
+window.addEventListener('hashchange', () => { state.route = parseHash(); renderPage(); });
 
-function router() {
-  if (!AdminAuth.isLoggedIn()) return renderLogin();
-  shell.style.display = 'flex';
-  loginScreen.innerHTML = '';
-  renderSidebar();
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function toast(msg, type = 'success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+function loading(target) { target.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div></div>`; }
 
-  const hash = location.hash || '#/dashboard';
-  if (hash.startsWith('#/dashboard')) return renderDashboard();
-  if (hash.startsWith('#/units') && hash === '#/units') return renderUnits();
-  if (hash.startsWith('#/unit/')) return renderUnitDetail(hash.split('/')[2]);
-  if (hash.startsWith('#/exam/')) return renderExamDetail(hash.split('/')[2]);
-  if (hash.startsWith('#/codes')) return renderCodes();
-  if (hash.startsWith('#/students')) return renderStudents();
-  if (hash.startsWith('#/rankings')) return renderRankingsPicker();
-  if (hash.startsWith('#/analytics')) return renderAnalytics();
-  if (hash.startsWith('#/reports')) return renderReports();
-  if (hash.startsWith('#/notifications')) return renderNotifications();
-  if (hash.startsWith('#/settings')) return renderSettings();
-  location.hash = '#/dashboard';
+// ---------- Theme ----------
+function initTheme() {
+  const saved = localStorage.getItem('mfx_admin_theme') || 'light';
+  document.documentElement.setAttribute('data-theme', saved);
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('mfx_admin_theme', next);
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
 }
 
-function renderSidebar() {
-  const user = AdminAuth.getUser();
-  sidebar.innerHTML = `
-    <div class="brand">👋 ${esc(user?.name || 'المدرّس')}</div>
-    ${NAV.map(([href, label]) => `<a href="${href}" class="${location.hash.startsWith(href) ? 'active' : ''}">${label}</a>`).join('')}
-    <a href="#" id="logoutLink" style="color:var(--danger);margin-top:10px">🚪 خروج</a>`;
-  document.getElementById('logoutLink').addEventListener('click', (e) => {
-    e.preventDefault(); AdminAuth.clear(); router();
+// ---------- Modal helper ----------
+function openModal(title, bodyHtml, { onMount } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  wrap.innerHTML = `<div class="modal-box"><h3>${title}</h3>${bodyHtml}</div>`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) wrap.remove(); });
+  document.body.appendChild(wrap);
+  if (onMount) onMount(wrap);
+  return wrap;
+}
+function closeModals() { document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove()); }
+function confirmAction(msg, onConfirm) {
+  openModal('تأكيد الحذف', `
+    <p style="color:var(--text-muted)">${escapeHtml(msg)}</p>
+    <div class="modal-actions">
+      <button class="btn danger" id="confirmYes">نعم، احذف</button>
+      <button class="btn secondary" id="confirmNo">إلغاء</button>
+    </div>`, {
+    onMount: (wrap) => {
+      wrap.querySelector('#confirmYes').addEventListener('click', async () => { wrap.remove(); await onConfirm(); });
+      wrap.querySelector('#confirmNo').addEventListener('click', () => wrap.remove());
+    }
   });
 }
 
-// ---------- LOGIN ----------
-function renderLogin() {
-  shell.style.display = 'none';
-  loginScreen.innerHTML = `
-    <div class="center-screen">
-      <div class="card" style="width:100%;max-width:380px">
-        <h2 style="text-align:center;margin-top:0">دخول المدرّس</h2>
-        <div style="margin-bottom:14px"><label>اسم المستخدم</label><input id="u"></div>
-        <div style="margin-bottom:18px"><label>كلمة المرور</label><input id="p" type="password"></div>
-        <button class="btn" style="width:100%" id="loginBtn">دخول</button>
-        <p id="err" style="color:var(--danger)"></p>
+// ---------- Login ----------
+function renderLoginScreen() {
+  document.getElementById('shell').style.display = 'none';
+  const el = document.getElementById('loginScreen');
+  el.innerHTML = `
+    <div class="admin-login-wrap">
+      <div class="admin-login-card">
+        <div class="icon-badge">🎓</div>
+        <h2>لوحة تحكم المدرّس</h2>
+        <p>سجّل الدخول لإدارة المنصة</p>
+        <div id="loginError"></div>
+        <form id="loginForm">
+          <div class="field"><label>اسم المستخدم</label><input type="text" id="username" required autofocus></div>
+          <div class="field"><label>كلمة المرور</label><input type="password" id="password" required></div>
+          <button type="submit" class="btn primary" style="width:100%;justify-content:center" id="loginBtn">دخول</button>
+        </form>
       </div>
     </div>`;
-  document.getElementById('loginBtn').addEventListener('click', async () => {
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('loginBtn');
+    btn.disabled = true; btn.textContent = 'جاري الدخول...';
     try {
       const data = await api.post('/auth/admin/login', {
-        username: document.getElementById('u').value, password: document.getElementById('p').value
+        username: document.getElementById('username').value.trim(),
+        password: document.getElementById('password').value
       });
       AdminAuth.setSession(data);
-      location.hash = '#/dashboard';
-      router();
-    } catch (e) { document.getElementById('err').textContent = e.message; }
+      boot();
+    } catch (err) {
+      document.getElementById('loginError').innerHTML = `<div class="error-msg" style="background:rgba(239,68,68,.1);color:var(--danger);border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:14px;font-weight:600">${escapeHtml(err.message)}</div>`;
+      btn.disabled = false; btn.textContent = 'دخول';
+    }
   });
 }
 
-// ---------- DASHBOARD ----------
+// ---------- Shell ----------
+function renderShell() {
+  document.getElementById('loginScreen').innerHTML = '';
+  document.getElementById('shell').style.display = 'flex';
+  const user = AdminAuth.getUser();
+  document.getElementById('sidebar').innerHTML = `
+    <div class="brand"><div class="dot"></div><span>لوحة التحكم</span></div>
+    <div id="navList"></div>
+    <div class="sidebar-footer">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">👤 ${escapeHtml(user?.name || user?.username || '')}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="themeToggleBtn" title="الوضع الليلي">🌙</button>
+        <button class="btn secondary sm" id="logoutBtn" style="flex:1">خروج</button>
+      </div>
+    </div>`;
+  document.getElementById('navList').innerHTML = NAV.map((n) => `
+    <a class="nav-item" href="#/${n.key}" data-key="${n.key}"><span class="ic">${n.icon}</span><span>${n.label}</span></a>
+  `).join('');
+  document.getElementById('logoutBtn').addEventListener('click', () => { AdminAuth.clear(); renderLoginScreen(); });
+  document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
+  const t = document.documentElement.getAttribute('data-theme');
+  document.getElementById('themeToggleBtn').textContent = t === 'dark' ? '☀️' : '🌙';
+}
+
+function highlightNav() {
+  document.querySelectorAll('.nav-item').forEach((a) => a.classList.toggle('active', a.dataset.key === state.route.name));
+}
+
+// ---------- Router ----------
+const app = document.getElementById('app');
+async function renderPage() {
+  highlightNav();
+  const { name, params } = state.route;
+  if (name === 'dashboard') return renderDashboard();
+  if (name === 'units') return renderUnits();
+  if (name === 'unit') return renderUnitWorkspace(params[0], params[1] || 'videos');
+  if (name === 'exam-questions') return renderExamQuestions(params[0]);
+  if (name === 'students') return renderStudents();
+  if (name === 'codes') return renderCodes();
+  if (name === 'analytics') return renderAnalytics();
+  if (name === 'settings') return renderSettings();
+  return renderDashboard();
+}
+
+// ---------- Dashboard ----------
 async function renderDashboard() {
-  loading();
-  const overview = await api.get('/analytics/overview');
+  loading(app);
+  let s; try { s = await api.get('/analytics/overview'); } catch (e) { toast(e.message, 'error'); return; }
   const cards = [
-    ['totalStudents', 'الطلاب'], ['publishedUnits', 'الوحدات المنشورة'],
-    ['totalVideos', 'الفيديوهات'], ['totalBooks', 'الكتب'],
-    ['totalExams', 'الاختبارات'], ['totalAttempts', 'محاولات الاختبار'],
-    ['activeCodes', 'أكواد مفعّلة'], ['unusedCodes', 'أكواد غير مستخدمة']
+    ['👥', s.totalStudents, 'إجمالي الطلاب'],
+    ['📚', s.totalUnits, 'إجمالي الوحدات'],
+    ['✅', s.publishedUnits, 'وحدات منشورة'],
+    ['🎬', s.totalVideos, 'إجمالي الفيديوهات'],
+    ['📘', s.totalBooks, 'إجمالي الكتب'],
+    ['📝', s.totalExams, 'إجمالي الامتحانات'],
+    ['🧾', s.totalAttempts, 'محاولات الامتحانات'],
+    ['🔑', s.activeCodes, 'أكواد مفعّلة'],
+    ['📦', s.unusedCodes, 'أكواد غير مستخدمة']
   ];
   app.innerHTML = `
-    <h2>لوحة القيادة</h2>
-    <div class="grid cols-3">
-      ${cards.map(([k, label]) => `
-        <div class="card stat-card"><div class="value">${overview[k]}</div><div class="label">${label}</div></div>
-      `).join('')}
+    <div class="topbar-row"><div><h1 class="page-title">لوحة التحكم</h1><p class="page-sub">نظرة عامة على أداء المنصة</p></div></div>
+    <div class="stats-grid">${cards.map(([ic, val, lbl]) => `
+      <div class="stat-card"><div class="ic">${ic}</div><div class="val">${val}</div><div class="lbl">${lbl}</div></div>
+    `).join('')}</div>
+    <div class="panel">
+      <h3>روابط سريعة</h3>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="#/units"><button class="btn primary">+ إضافة كورس جديد</button></a>
+        <a href="#/codes"><button class="btn secondary">🔑 توليد أكواد</button></a>
+        <a href="#/students"><button class="btn secondary">👥 إدارة الطلاب</button></a>
+        <a href="#/analytics"><button class="btn secondary">📊 عرض التقارير</button></a>
+      </div>
     </div>`;
 }
 
-// ---------- UNITS ----------
+// ---------- Units (Courses) ----------
 async function renderUnits() {
-  loading();
-  const units = await api.get('/units');
+  loading(app);
+  let units = []; try { units = await api.get('/units'); } catch (e) { toast(e.message, 'error'); return; }
+  units.sort((a, b) => (parseFloat(a.order) || 0) - (parseFloat(b.order) || 0));
+  state.unitsCache = units;
+
   app.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h2>الوحدات</h2>
-      <button class="btn" id="addUnitBtn">+ وحدة جديدة</button>
+    <div class="topbar-row">
+      <div><h1 class="page-title">الكورسات (Units)</h1><p class="page-sub">إدارة الوحدات التعليمية</p></div>
+      <button class="btn primary" id="addUnitBtn">+ إضافة وحدة</button>
     </div>
-    <div class="grid cols-3">
-      ${units.map(u => `
-        <div class="card">
-          <div style="display:flex;justify-content:space-between">
-            <b>${esc(u.title)}</b><span class="badge ${u.status}">${u.status}</span>
-          </div>
-          <p style="color:var(--text-muted);font-size:13px">${esc(u.description || '')}</p>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-            <a class="btn secondary" href="#/unit/${u.id}">إدارة</a>
-            <button class="btn ${u.status === 'published' ? 'secondary' : ''}" data-act="toggle" data-id="${u.id}" data-status="${u.status}">
-              ${u.status === 'published' ? 'إخفاء' : 'نشر'}
-            </button>
-            <button class="btn secondary" data-act="dup" data-id="${u.id}">نسخ</button>
-            <button class="btn danger" data-act="del" data-id="${u.id}">حذف</button>
-          </div>
-        </div>`).join('') || '<p class="empty-state">لا توجد وحدات بعد</p>'}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>العنوان</th><th>الوصف</th><th>الحالة</th><th></th></tr></thead>
+        <tbody>
+          ${units.length ? units.map((u) => `
+            <tr>
+              <td><a href="#/unit/${u.id}/videos" style="font-weight:800;color:var(--primary)">${escapeHtml(u.title)}</a></td>
+              <td style="max-width:340px;color:var(--text-muted)">${escapeHtml((u.description || '').slice(0, 70))}</td>
+              <td><span class="status-pill ${u.status}">${u.status === 'published' ? 'منشورة' : u.status === 'draft' ? 'مسودة' : 'مخفية'}</span></td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn sm secondary" onclick="location.hash='#/unit/${u.id}/videos'">فتح</button>
+                  ${u.status === 'published'
+                    ? `<button class="btn sm secondary" onclick="unitAction('${u.id}','hide')">إخفاء</button>`
+                    : `<button class="btn sm secondary" onclick="unitAction('${u.id}','publish')">نشر</button>`}
+                  <button class="btn sm secondary" onclick="unitAction('${u.id}','duplicate')">نسخ</button>
+                  <button class="btn sm secondary" onclick="editUnit('${u.id}')">تعديل</button>
+                  <button class="btn sm danger" onclick="deleteUnit('${u.id}')">حذف</button>
+                </div>
+              </td>
+            </tr>`).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="em">📚</div>لا توجد وحدات بعد</div></td></tr>`}
+        </tbody>
+      </table>
     </div>`;
 
-  document.getElementById('addUnitBtn').addEventListener('click', async () => {
-    const title = prompt('عنوان الوحدة:');
-    if (!title) return;
-    await api.post('/units', { title });
-    renderUnits();
-  });
-
-  app.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', async () => {
-    const id = btn.dataset.id;
-    if (btn.dataset.act === 'toggle') {
-      await api.post(`/units/${id}/${btn.dataset.status === 'published' ? 'hide' : 'publish'}`);
-    } else if (btn.dataset.act === 'dup') {
-      await api.post(`/units/${id}/duplicate`);
-    } else if (btn.dataset.act === 'del') {
-      if (!confirm('حذف الوحدة نهائيًا؟')) return;
-      await api.del(`/units/${id}`);
-    }
-    renderUnits();
-  }));
+  document.getElementById('addUnitBtn').addEventListener('click', () => unitFormModal());
 }
 
-async function renderUnitDetail(unitId) {
-  loading();
-  const [unit, videos, books, exams] = await Promise.all([
-    api.get(`/units/${unitId}`), api.get(`/videos/unit/${unitId}`),
-    api.get(`/books/unit/${unitId}`), api.get(`/exams/unit/${unitId}`)
-  ]);
+function unitFormModal(unit = null) {
+  openModal(unit ? 'تعديل الوحدة' : 'إضافة وحدة جديدة', `
+    <form id="unitForm">
+      <div class="field"><label>العنوان</label><input type="text" id="f_title" value="${unit ? escapeHtml(unit.title) : ''}" required></div>
+      <div class="field"><label>الوصف</label><textarea id="f_desc" rows="3">${unit ? escapeHtml(unit.description || '') : ''}</textarea></div>
+      <div class="field"><label>الترتيب</label><input type="number" id="f_order" value="${unit ? unit.order || 0 : 0}"></div>
+      <div class="modal-actions">
+        <button type="submit" class="btn primary">حفظ</button>
+        <button type="button" class="btn secondary" onclick="closeModals()">إلغاء</button>
+      </div>
+    </form>`, {
+    onMount: (wrap) => wrap.querySelector('#unitForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        title: document.getElementById('f_title').value.trim(),
+        description: document.getElementById('f_desc').value.trim(),
+        order: parseFloat(document.getElementById('f_order').value) || 0
+      };
+      try {
+        if (unit) await api.patch(`/units/${unit.id}`, payload);
+        else await api.post('/units', payload);
+        closeModals(); toast('تم الحفظ ✅'); renderUnits();
+      } catch (err) { toast(err.message, 'error'); }
+    })
+  });
+}
+async function editUnit(id) {
+  const unit = state.unitsCache.find((u) => u.id === id) || await api.get(`/units/${id}`);
+  unitFormModal(unit);
+}
+async function unitAction(id, action) {
+  try { await api.post(`/units/${id}/${action}`); toast('تم ✅'); renderUnits(); } catch (e) { toast(e.message, 'error'); }
+}
+function deleteUnit(id) {
+  confirmAction('سيتم حذف الوحدة وكل محتواها المرتبط بها. هل أنت متأكد؟', async () => {
+    try { await api.del(`/units/${id}`); toast('تم الحذف'); renderUnits(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
+// ---------- Unit workspace (videos / books / exams) ----------
+async function renderUnitWorkspace(unitId, tab) {
+  loading(app);
+  let unit; try { unit = await api.get(`/units/${unitId}`); } catch (e) { toast(e.message, 'error'); return; }
 
   app.innerHTML = `
-    <a href="#/units" class="btn ghost">→ الوحدات</a>
-    <h2>${esc(unit.title)}</h2>
-
+    <a href="#/units" style="display:inline-flex;gap:6px;color:var(--text-muted);font-weight:700;font-size:13px;margin-bottom:14px">→ رجوع للكورسات</a>
+    <div class="topbar-row"><div><h1 class="page-title">${escapeHtml(unit.title)}</h1><p class="page-sub">إدارة محتوى الوحدة</p></div></div>
     <div class="tabs">
-      <button class="active" data-tab="videos">فيديوهات</button>
-      <button data-tab="books">كتب</button>
-      <button data-tab="exams">اختبارات</button>
+      <a class="tab ${tab === 'videos' ? 'active' : ''}" href="#/unit/${unitId}/videos">🎬 الفيديوهات</a>
+      <a class="tab ${tab === 'books' ? 'active' : ''}" href="#/unit/${unitId}/books">📘 الكتب</a>
+      <a class="tab ${tab === 'exams' ? 'active' : ''}" href="#/unit/${unitId}/exams">📝 الامتحانات</a>
     </div>
+    <div id="workspaceBody"></div>`;
 
-    <div id="tabVideos">
-      <button class="btn" id="uploadVideoBtn">⬆ رفع فيديو</button>
-      <div class="grid cols-3" style="margin-top:14px">
-        ${videos.map(v => `
-          <div class="card">
-            <b>${esc(v.title)}</b>
-            <div style="display:flex;gap:6px;margin-top:8px">
-              <button class="btn danger" data-del-video="${v.id}" data-file="${v.driveFileId}">حذف</button>
-            </div>
-          </div>`).join('') || '<p class="empty-state">لا يوجد فيديوهات</p>'}
+  const body = document.getElementById('workspaceBody');
+  if (tab === 'videos') return renderVideosTab(body, unitId);
+  if (tab === 'books') return renderBooksTab(body, unitId);
+  if (tab === 'exams') return renderExamsTab(body, unitId);
+}
+
+// -- Videos tab --
+async function renderVideosTab(body, unitId) {
+  loading(body);
+  let videos = []; try { videos = await api.get(`/videos/unit/${unitId}`); } catch (e) { toast(e.message, 'error'); }
+  body.innerHTML = `
+    <div style="text-align:left;margin-bottom:14px"><button class="btn primary sm" id="addVideoBtn">+ إضافة فيديو</button></div>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>العنوان</th><th>الحالة</th><th></th></tr></thead>
+      <tbody>${videos.length ? videos.map((v) => `
+        <tr><td>${escapeHtml(v.title)}</td>
+          <td><span class="status-pill ${v.status}">${v.status === 'published' ? 'منشور' : 'مسودة'}</span></td>
+          <td><div class="row-actions">
+            <button class="btn sm secondary" onclick="videoFormModal('${unitId}', ${JSON.stringify(v).replace(/"/g, '&quot;')})">تعديل</button>
+            <button class="btn sm danger" onclick="deleteVideo('${v.id}','${unitId}')">حذف</button>
+          </div></td></tr>`).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="em">🎬</div>لا توجد فيديوهات بعد</div></td></tr>`}
+      </tbody></table></div>`;
+  document.getElementById('addVideoBtn').addEventListener('click', () => videoFormModal(unitId));
+}
+function videoFormModal(unitId, video = null) {
+  openModal(video ? 'تعديل الفيديو' : 'إضافة فيديو', `
+    <form id="vForm">
+      <div class="field"><label>العنوان</label><input id="v_title" value="${video ? escapeHtml(video.title) : ''}" required></div>
+      <div class="field"><label>رابط Google Drive</label><input id="v_url" value="${video ? escapeHtml(video.driveUrl) : ''}" placeholder="https://drive.google.com/file/d/..." required></div>
+      <div class="field-row">
+        <div class="field"><label>الترتيب</label><input type="number" id="v_order" value="${video ? video.order || 0 : 0}"></div>
+        <div class="field"><label>المدة (ثانية)</label><input type="number" id="v_dur" value="${video ? video.durationSeconds || 0 : 0}"></div>
       </div>
-    </div>
-    <div id="tabBooks" style="display:none">
-      <button class="btn" id="uploadBookBtn">⬆ رفع كتاب PDF</button>
-      <div class="grid cols-3" style="margin-top:14px">
-        ${books.map(b => `
-          <div class="card">
-            <b>${esc(b.title)}</b>
-            <div style="display:flex;gap:6px;margin-top:8px">
-              <button class="btn danger" data-del-book="${b.id}" data-file="${b.driveFileId}">حذف</button>
-            </div>
-          </div>`).join('') || '<p class="empty-state">لا يوجد كتب</p>'}
-      </div>
-    </div>
-    <div id="tabExams" style="display:none">
-      <button class="btn" id="addExamBtn">+ اختبار جديد</button>
-      <div class="grid cols-3" style="margin-top:14px">
-        ${exams.map(e => `
-          <div class="card">
-            <div style="display:flex;justify-content:space-between"><b>${esc(e.title)}</b><span class="badge ${e.status}">${e.status}</span></div>
-            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-              <a class="btn secondary" href="#/exam/${e.id}">إدارة الأسئلة</a>
-              <button class="btn" data-exam-publish="${e.id}" data-status="${e.status}">${e.status === 'published' ? 'إخفاء' : 'نشر'}</button>
-            </div>
-          </div>`).join('') || '<p class="empty-state">لا يوجد اختبارات</p>'}
-      </div>
-    </div>`;
-
-  // tabs
-  document.querySelectorAll('.tabs button').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    ['videos', 'books', 'exams'].forEach(t => {
-      document.getElementById('tab' + t[0].toUpperCase() + t.slice(1)).style.display = t === btn.dataset.tab ? 'block' : 'none';
-    });
-  }));
-
-  document.getElementById('uploadVideoBtn').addEventListener('click', () => uploadMedia(unitId, 'video'));
-  document.getElementById('uploadBookBtn').addEventListener('click', () => uploadMedia(unitId, 'book'));
-
-  document.getElementById('addExamBtn').addEventListener('click', async () => {
-    const title = prompt('عنوان الاختبار:');
-    if (!title) return;
-    const exam = await api.post('/exams', { unitId, title });
-    location.hash = `#/exam/${exam.id}`;
+      <div class="modal-actions"><button class="btn primary">حفظ</button><button type="button" class="btn secondary" onclick="closeModals()">إلغاء</button></div>
+    </form>`, {
+    onMount: (wrap) => wrap.querySelector('#vForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = { unitId, title: document.getElementById('v_title').value.trim(), driveUrl: document.getElementById('v_url').value.trim(), order: parseFloat(document.getElementById('v_order').value) || 0, durationSeconds: parseFloat(document.getElementById('v_dur').value) || 0 };
+      try {
+        if (video) await api.patch(`/videos/${video.id}`, payload); else await api.post('/videos', payload);
+        closeModals(); toast('تم الحفظ ✅'); renderUnitWorkspace(unitId, 'videos');
+      } catch (err) { toast(err.message, 'error'); }
+    })
   });
-
-  app.querySelectorAll('[data-del-video]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('حذف الفيديو؟')) return;
-    await api.del(`/videos/${b.dataset.delVideo}`);
-    renderUnitDetail(unitId);
-  }));
-  app.querySelectorAll('[data-del-book]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('حذف الكتاب؟')) return;
-    await api.del(`/books/${b.dataset.delBook}`);
-    renderUnitDetail(unitId);
-  }));
-  app.querySelectorAll('[data-exam-publish]').forEach(b => b.addEventListener('click', async () => {
-    await api.post(`/exams/${b.dataset.examPublish}/${b.dataset.status === 'published' ? 'hide' : 'publish'}`);
-    renderUnitDetail(unitId);
-  }));
+}
+function deleteVideo(id, unitId) {
+  confirmAction('هل تريد حذف هذا الفيديو؟', async () => {
+    try { await api.del(`/videos/${id}`); toast('تم الحذف'); renderUnitWorkspace(unitId, 'videos'); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 
-function uploadMedia(unitId, kind) {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = kind === 'video' ? 'video/*' : 'application/pdf';
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-    const title = prompt('العنوان:', file.name) || file.name;
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('subfolder', kind === 'video' ? 'videos' : 'books');
-    app.insertAdjacentHTML('afterbegin', '<p id="uploadStatus">⏳ جاري الرفع...</p>');
-    try {
-      const uploaded = await api.upload('/upload', formData);
-      const endpoint = kind === 'video' ? '/videos' : '/books';
-      await api.post(endpoint, {
-        unitId, title, driveFileId: uploaded.driveFileId, driveUrl: uploaded.driveUrl
-      });
-      renderUnitDetail(unitId);
-    } catch (e) {
-      alert('فشل الرفع: ' + e.message);
-      document.getElementById('uploadStatus')?.remove();
-    }
-  };
-  input.click();
+// -- Books tab --
+async function renderBooksTab(body, unitId) {
+  loading(body);
+  let books = []; try { books = await api.get(`/books/unit/${unitId}`); } catch (e) { toast(e.message, 'error'); }
+  body.innerHTML = `
+    <div style="text-align:left;margin-bottom:14px"><button class="btn primary sm" id="addBookBtn">+ إضافة كتاب</button></div>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>العنوان</th><th>الحالة</th><th></th></tr></thead>
+      <tbody>${books.length ? books.map((b) => `
+        <tr><td>${escapeHtml(b.title)}</td>
+          <td><span class="status-pill ${b.status}">${b.status === 'published' ? 'منشور' : 'مسودة'}</span></td>
+          <td><div class="row-actions">
+            <button class="btn sm secondary" onclick="bookFormModal('${unitId}', ${JSON.stringify(b).replace(/"/g, '&quot;')})">تعديل</button>
+            <button class="btn sm danger" onclick="deleteBook('${b.id}','${unitId}')">حذف</button>
+          </div></td></tr>`).join('') : `<tr><td colspan="3"><div class="empty-state"><div class="em">📘</div>لا توجد كتب بعد</div></td></tr>`}
+      </tbody></table></div>`;
+  document.getElementById('addBookBtn').addEventListener('click', () => bookFormModal(unitId));
+}
+function bookFormModal(unitId, book = null) {
+  openModal(book ? 'تعديل الكتاب' : 'إضافة كتاب', `
+    <form id="bForm">
+      <div class="field"><label>العنوان</label><input id="b_title" value="${book ? escapeHtml(book.title) : ''}" required></div>
+      <div class="field"><label>رابط Google Drive (PDF)</label><input id="b_url" value="${book ? escapeHtml(book.driveUrl) : ''}" placeholder="https://drive.google.com/file/d/..." required></div>
+      <div class="field-row">
+        <div class="field"><label>الترتيب</label><input type="number" id="b_order" value="${book ? book.order || 0 : 0}"></div>
+        <div class="field"><label>عدد الصفحات</label><input type="number" id="b_pages" value="${book ? book.pageCount || 0 : 0}"></div>
+      </div>
+      <div class="modal-actions"><button class="btn primary">حفظ</button><button type="button" class="btn secondary" onclick="closeModals()">إلغاء</button></div>
+    </form>`, {
+    onMount: (wrap) => wrap.querySelector('#bForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = { unitId, title: document.getElementById('b_title').value.trim(), driveUrl: document.getElementById('b_url').value.trim(), order: parseFloat(document.getElementById('b_order').value) || 0, pageCount: parseFloat(document.getElementById('b_pages').value) || 0 };
+      try {
+        if (book) await api.patch(`/books/${book.id}`, payload); else await api.post('/books', payload);
+        closeModals(); toast('تم الحفظ ✅'); renderUnitWorkspace(unitId, 'books');
+      } catch (err) { toast(err.message, 'error'); }
+    })
+  });
+}
+function deleteBook(id, unitId) {
+  confirmAction('هل تريد حذف هذا الكتاب؟', async () => {
+    try { await api.del(`/books/${id}`); toast('تم الحذف'); renderUnitWorkspace(unitId, 'books'); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 
-// ---------- EXAM QUESTIONS ----------
-async function renderExamDetail(examId) {
-  loading();
-  const exam = await api.get(`/exams/${examId}`);
+// -- Exams tab --
+async function renderExamsTab(body, unitId) {
+  loading(body);
+  let exams = []; try { exams = await api.get(`/exams/unit/${unitId}`); } catch (e) { toast(e.message, 'error'); }
+  body.innerHTML = `
+    <div style="text-align:left;margin-bottom:14px"><button class="btn primary sm" id="addExamBtn">+ إضافة امتحان</button></div>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>العنوان</th><th>الوقت</th><th>الحالة</th><th></th></tr></thead>
+      <tbody>${exams.length ? exams.map((ex) => `
+        <tr><td>${escapeHtml(ex.title)}</td><td>${ex.timerMinutes > 0 ? ex.timerMinutes + ' د' : '—'}</td>
+          <td><span class="status-pill ${ex.status}">${ex.status === 'published' ? 'منشور' : 'مسودة'}</span></td>
+          <td><div class="row-actions">
+            <button class="btn sm secondary" onclick="location.hash='#/exam-questions/${ex.id}'">الأسئلة</button>
+            ${ex.status === 'published' ? `<button class="btn sm secondary" onclick="examAction('${ex.id}','hide','${unitId}')">إخفاء</button>` : `<button class="btn sm secondary" onclick="examAction('${ex.id}','publish','${unitId}')">نشر</button>`}
+            <button class="btn sm secondary" onclick="examFormModal('${unitId}', ${JSON.stringify(ex).replace(/"/g, '&quot;')})">تعديل</button>
+            <button class="btn sm danger" onclick="deleteExam('${ex.id}','${unitId}')">حذف</button>
+          </div></td></tr>`).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="em">📝</div>لا توجد امتحانات بعد</div></td></tr>`}
+      </tbody></table></div>`;
+  document.getElementById('addExamBtn').addEventListener('click', () => examFormModal(unitId));
+}
+function examFormModal(unitId, exam = null) {
+  openModal(exam ? 'تعديل الامتحان' : 'إضافة امتحان', `
+    <form id="exForm">
+      <div class="field"><label>العنوان</label><input id="e_title" value="${exam ? escapeHtml(exam.title) : ''}" required></div>
+      <div class="field"><label>الوصف</label><textarea id="e_desc" rows="2">${exam ? escapeHtml(exam.description || '') : ''}</textarea></div>
+      <div class="field-row">
+        <div class="field"><label>الوقت (دقيقة، 0 = بدون وقت)</label><input type="number" id="e_timer" value="${exam ? exam.timerMinutes || 0 : 0}"></div>
+        <div class="field"><label>محاولات مسموحة</label><input type="number" id="e_attempts" value="${exam ? exam.maxAttempts || 1 : 1}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>درجة النجاح %</label><input type="number" id="e_pass" value="${exam ? exam.passingScore || 50 : 50}"></div>
+        <div class="field"><label>خصم الإجابة الخاطئة</label><input type="number" id="e_neg" value="${exam ? exam.negativeMarkValue || 0 : 0}"></div>
+      </div>
+      <div class="checkbox-row"><input type="checkbox" id="e_shuffle" ${exam && String(exam.shuffleQuestions) === 'true' ? 'checked' : ''}><label>ترتيب عشوائي للأسئلة</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="e_negative" ${exam && String(exam.negativeMarking) === 'true' ? 'checked' : ''}><label>تفعيل الخصم للإجابة الخاطئة</label></div>
+      <div class="modal-actions"><button class="btn primary">حفظ</button><button type="button" class="btn secondary" onclick="closeModals()">إلغاء</button></div>
+    </form>`, {
+    onMount: (wrap) => wrap.querySelector('#exForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {
+        unitId, title: document.getElementById('e_title').value.trim(), description: document.getElementById('e_desc').value.trim(),
+        timerMinutes: parseFloat(document.getElementById('e_timer').value) || 0,
+        maxAttempts: parseFloat(document.getElementById('e_attempts').value) || 1,
+        passingScore: parseFloat(document.getElementById('e_pass').value) || 50,
+        negativeMarkValue: parseFloat(document.getElementById('e_neg').value) || 0,
+        shuffleQuestions: document.getElementById('e_shuffle').checked,
+        negativeMarking: document.getElementById('e_negative').checked
+      };
+      try {
+        if (exam) await api.patch(`/exams/${exam.id}`, payload); else await api.post('/exams', payload);
+        closeModals(); toast('تم الحفظ ✅'); renderUnitWorkspace(unitId, 'exams');
+      } catch (err) { toast(err.message, 'error'); }
+    })
+  });
+}
+async function examAction(id, action, unitId) {
+  try { await api.post(`/exams/${id}/${action}`); toast('تم ✅'); renderUnitWorkspace(unitId, 'exams'); } catch (e) { toast(e.message, 'error'); }
+}
+function deleteExam(id, unitId) {
+  confirmAction('سيتم حذف الامتحان وكل أسئلته. هل أنت متأكد؟', async () => {
+    try { await api.del(`/exams/${id}`); toast('تم الحذف'); renderUnitWorkspace(unitId, 'exams'); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
+// ---------- Question bank ----------
+async function renderExamQuestions(examId) {
+  loading(app);
+  let exam, questions = [];
+  try { exam = await api.get(`/exams/${examId}`); questions = await api.get(`/questions/exam/${examId}`); } catch (e) { toast(e.message, 'error'); return; }
+
   app.innerHTML = `
-    <a href="#/unit/${exam.unitId}" class="btn ghost">→ رجوع للوحدة</a>
-    <h2>${esc(exam.title)} — بنك الأسئلة</h2>
-
-    <div class="card" style="margin-bottom:16px">
-      <div class="grid cols-3">
-        <div><label>الوقت (دقيقة)</label><input id="cfgTimer" type="number" value="${exam.timerMinutes}"></div>
-        <div><label>عدد المحاولات</label><input id="cfgAttempts" type="number" value="${exam.maxAttempts}"></div>
-        <div><label>درجة النجاح %</label><input id="cfgPassing" type="number" value="${exam.passingScore}"></div>
-        <div><label><input id="cfgShuffle" type="checkbox" ${String(exam.shuffleQuestions) === 'true' ? 'checked' : ''}> ترتيب عشوائي</label></div>
-        <div><label><input id="cfgNegative" type="checkbox" ${String(exam.negativeMarking) === 'true' ? 'checked' : ''}> خصم درجات</label></div>
-        <div><label>قيمة الخصم</label><input id="cfgNegativeVal" type="number" value="${exam.negativeMarkValue}"></div>
-      </div>
-      <button class="btn" id="saveExamCfg" style="margin-top:12px">حفظ الإعدادات</button>
-    </div>
-
-    <button class="btn" id="addQuestionBtn">+ سؤال جديد</button>
-    <div id="questionsList" class="grid cols-2" style="margin-top:14px"></div>`;
-
-  document.getElementById('saveExamCfg').addEventListener('click', async () => {
-    await api.patch(`/exams/${examId}`, {
-      timerMinutes: +document.getElementById('cfgTimer').value,
-      maxAttempts: +document.getElementById('cfgAttempts').value,
-      passingScore: +document.getElementById('cfgPassing').value,
-      shuffleQuestions: document.getElementById('cfgShuffle').checked,
-      negativeMarking: document.getElementById('cfgNegative').checked,
-      negativeMarkValue: +document.getElementById('cfgNegativeVal').value
-    });
-    alert('تم الحفظ');
-  });
-
-  document.getElementById('addQuestionBtn').addEventListener('click', () => openQuestionModal(examId));
-  loadQuestions(examId);
+    <a href="#/unit/${exam.unitId}/exams" style="display:inline-flex;gap:6px;color:var(--text-muted);font-weight:700;font-size:13px;margin-bottom:14px">→ رجوع للامتحانات</a>
+    <div class="topbar-row"><div><h1 class="page-title">بنك أسئلة: ${escapeHtml(exam.title)}</h1><p class="page-sub">${questions.length} سؤال</p></div>
+      <button class="btn primary" id="addQBtn">+ إضافة سؤال</button></div>
+    <div id="qList">${questions.length ? questions.map((q, i) => questionRowHtml(q, i)).join('') : `<div class="empty-state"><div class="em">❓</div>لا توجد أسئلة بعد</div>`}</div>`;
+  document.getElementById('addQBtn').addEventListener('click', () => questionFormModal(examId));
 }
-
-async function loadQuestions(examId) {
-  const questions = await api.get(`/questions/exam/${examId}`);
-  document.getElementById('questionsList').innerHTML = questions.map(q => `
-    <div class="card">
-      <span class="badge draft">${q.type}</span>
-      <p>${esc(q.text)}</p>
-      <div style="display:flex;gap:6px">
-        <button class="btn secondary" data-edit-q="${q.id}">تعديل</button>
-        <button class="btn danger" data-del-q="${q.id}">حذف</button>
-      </div>
-    </div>`).join('') || '<p class="empty-state">لا يوجد أسئلة بعد</p>';
-
-  document.querySelectorAll('[data-del-q]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('حذف السؤال؟')) return;
-    await api.del(`/questions/${b.dataset.delQ}`);
-    loadQuestions(examId);
-  }));
-  document.querySelectorAll('[data-edit-q]').forEach(b => b.addEventListener('click', () => {
-    const q = questions.find(x => x.id === b.dataset.editQ);
-    openQuestionModal(examId, q);
-  }));
-}
-
-function openQuestionModal(examId, existing) {
-  const backdrop = document.createElement('div');
-  backdrop.className = 'modal-backdrop';
-  const opts = existing?.options ? JSON.parse(existing.options) : ['', ''];
-  backdrop.innerHTML = `
-    <div class="modal">
-      <h3>${existing ? 'تعديل سؤال' : 'سؤال جديد'}</h3>
-      <label>نوع السؤال</label>
-      <select id="qType">
-        ${['mcq', 'truefalse', 'multi', 'fillblank', 'essay', 'image'].map(t =>
-          `<option value="${t}" ${existing?.type === t ? 'selected' : ''}>${t}</option>`).join('')}
-      </select>
-      <label style="margin-top:10px">نص السؤال</label>
-      <textarea id="qText" rows="2">${esc(existing?.text || '')}</textarea>
-      <div id="qOptionsWrap" style="margin-top:10px"></div>
-      <label style="margin-top:10px">الدرجة</label>
-      <input id="qPoints" type="number" value="${existing?.points || 1}">
-      <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn" id="saveQ">حفظ</button>
-        <button class="btn secondary" id="cancelQ">إلغاء</button>
-      </div>
-    </div>`;
-  document.body.appendChild(backdrop);
-
-  function renderOptionsUI() {
-    const type = document.getElementById('qType').value;
-    const wrap = document.getElementById('qOptionsWrap');
-    if (type === 'mcq' || type === 'multi') {
-      wrap.innerHTML = `
-        <label>الاختيارات (سطر لكل اختيار)</label>
-        <textarea id="qOptions" rows="3">${opts.join('\n')}</textarea>
-        <label style="margin-top:8px">الإجابة الصحيحة (رقم الاختيار بدءًا من 0، افصل بفاصلة للمتعدد)</label>
-        <input id="qCorrect" value="${existing?.correctAnswer ? JSON.parse(existing.correctAnswer) : ''}">`;
-    } else if (type === 'truefalse') {
-      wrap.innerHTML = `<label>الإجابة الصحيحة</label>
-        <select id="qCorrect"><option value="true">صح</option><option value="false">خطأ</option></select>`;
-    } else if (type === 'fillblank') {
-      wrap.innerHTML = `<label>الإجابة الصحيحة</label><input id="qCorrect" value="${existing?.correctAnswer ? JSON.parse(existing.correctAnswer) : ''}">`;
-    } else if (type === 'image') {
-      wrap.innerHTML = `<label>رابط الصورة</label><input id="qImageUrl" value="${esc(existing?.imageUrl || '')}">`;
-    } else {
-      wrap.innerHTML = '<p style="color:var(--text-muted);font-size:13px">تُصحَّح يدويًا من المدرّس</p>';
-    }
-  }
-  document.getElementById('qType').addEventListener('change', renderOptionsUI);
-  renderOptionsUI();
-
-  document.getElementById('cancelQ').addEventListener('click', () => backdrop.remove());
-  document.getElementById('saveQ').addEventListener('click', async () => {
-    const type = document.getElementById('qType').value;
-    const text = document.getElementById('qText').value;
-    const points = +document.getElementById('qPoints').value || 1;
-    let options, correctAnswer, imageUrl;
-
-    if (type === 'mcq' || type === 'multi') {
-      options = document.getElementById('qOptions').value.split('\n').map(s => s.trim()).filter(Boolean);
-      const raw = document.getElementById('qCorrect').value;
-      correctAnswer = type === 'multi' ? raw.split(',').map(s => s.trim()) : raw.trim();
-    } else if (type === 'truefalse' || type === 'fillblank') {
-      correctAnswer = document.getElementById('qCorrect').value;
-    } else if (type === 'image') {
-      imageUrl = document.getElementById('qImageUrl').value;
-    }
-
-    const payload = { examId, type, text, points, options, correctAnswer, imageUrl };
-    if (existing) await api.patch(`/questions/${existing.id}`, payload);
-    else await api.post('/questions', payload);
-
-    backdrop.remove();
-    loadQuestions(examId);
-  });
-}
-
-// ---------- CODES ----------
-async function renderCodes() {
-  loading();
-  const [codes, units] = await Promise.all([api.get('/codes'), api.get('/units')]);
-  app.innerHTML = `
-    <h2>أكواد الطلاب</h2>
-    <div class="card" style="margin-bottom:16px">
-      <div class="grid cols-3">
-        <div><label>الوحدة</label>
-          <select id="codeUnit">${units.map(u => `<option value="${u.id}">${esc(u.title)}</option>`).join('')}</select>
+function questionRowHtml(q, i) {
+  const opts = safeParse(q.options) || [];
+  const correct = safeParse(q.correctAnswer);
+  return `
+    <div class="panel" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--text-muted);font-weight:800;margin-bottom:6px">سؤال ${i + 1} — ${qTypeLabel(q.type)} — ${q.points || 1} درجة</div>
+          <div style="font-weight:700;margin-bottom:10px">${escapeHtml(q.text)}</div>
+          ${opts.length ? `<div style="display:flex;flex-direction:column;gap:6px">${opts.map((o, idx) => `
+            <div style="font-size:13px;padding:8px 12px;border-radius:8px;background:${String(idx) === String(correct) || (Array.isArray(correct) && correct.map(String).includes(String(idx))) ? 'rgba(34,197,94,.12)' : 'var(--bg-alt)'}">${idx === correct || (Array.isArray(correct) && correct.includes(idx)) ? '✅ ' : ''}${escapeHtml(o)}</div>
+          `).join('')}</div>` : ''}
         </div>
-        <div><label>عدد الأكواد</label><input id="codeCount" type="number" value="10"></div>
-        <div><label>البادئة</label><input id="codePrefix" value="MFX"></div>
+        <div class="row-actions">
+          <button class="btn sm secondary" onclick='questionFormModal(${JSON.stringify(q.examId)}, ${JSON.stringify(q).replace(/'/g, "&#39;")})'>تعديل</button>
+          <button class="btn sm danger" onclick="deleteQuestion('${q.id}','${q.examId}')">حذف</button>
+        </div>
       </div>
-      <button class="btn" id="genBtn" style="margin-top:12px">توليد الأكواد</button>
-      <a class="btn secondary" id="excelBtn">تصدير Excel</a>
-      <a class="btn secondary" id="pdfBtn">تصدير PDF</a>
-      <a class="btn secondary" id="printBtn" target="_blank">طباعة</a>
-    </div>
-    <table>
-      <thead><tr><th>الكود</th><th>الحالة</th><th>الطالب</th><th></th></tr></thead>
-      <tbody>
-        ${codes.map(c => `<tr>
-          <td>${esc(c.code)}</td><td><span class="badge ${c.status}">${c.status}</span></td>
-          <td>${esc(c.studentName || '-')}</td>
-          <td><button class="btn danger" data-del-code="${c.id}">حذف</button></td>
-        </tr>`).join('')}
-      </tbody>
-    </table>`;
+    </div>`;
+}
+function qTypeLabel(t) { return { mcq: 'اختيار من متعدد', truefalse: 'صح/خطأ', multi: 'متعدد الإجابات', fillblank: 'أكمل الفراغ', essay: 'مقالي', image: 'صورة' }[t] || t; }
+function safeParse(raw) { try { return JSON.parse(raw); } catch (e) { return raw; } }
 
-  const unitSelect = document.getElementById('codeUnit');
-  const updateLinks = () => {
-    const uid = unitSelect.value;
-    document.getElementById('excelBtn').href = `/api/codes/export/excel?unitId=${uid}`;
-    document.getElementById('pdfBtn').href = `/api/codes/export/pdf?unitId=${uid}`;
-    document.getElementById('printBtn').href = `/api/codes/print?unitId=${uid}`;
-  };
-  unitSelect.addEventListener('change', updateLinks);
-  updateLinks();
+function questionFormModal(examId, q = null) {
+  const type = q ? q.type : 'mcq';
+  openModal(q ? 'تعديل السؤال' : 'إضافة سؤال', `
+    <form id="qForm">
+      <div class="field"><label>نوع السؤال</label>
+        <select id="q_type">
+          <option value="mcq" ${type === 'mcq' ? 'selected' : ''}>اختيار من متعدد</option>
+          <option value="truefalse" ${type === 'truefalse' ? 'selected' : ''}>صح / خطأ</option>
+          <option value="multi" ${type === 'multi' ? 'selected' : ''}>متعدد الإجابات</option>
+          <option value="fillblank" ${type === 'fillblank' ? 'selected' : ''}>أكمل الفراغ</option>
+          <option value="essay" ${type === 'essay' ? 'selected' : ''}>سؤال مقالي</option>
+        </select>
+      </div>
+      <div class="field"><label>نص السؤال</label><textarea id="q_text" rows="2" required>${q ? escapeHtml(q.text) : ''}</textarea></div>
+      <div id="optionsArea"></div>
+      <div class="field-row">
+        <div class="field"><label>الدرجة</label><input type="number" id="q_points" value="${q ? q.points || 1 : 1}"></div>
+        <div class="field"><label>الترتيب</label><input type="number" id="q_order" value="${q ? q.order || 0 : 0}"></div>
+      </div>
+      <div class="modal-actions"><button class="btn primary">حفظ</button><button type="button" class="btn secondary" onclick="closeModals()">إلغاء</button></div>
+    </form>`, {
+    onMount: (wrap) => {
+      const optionsArea = wrap.querySelector('#optionsArea');
+      const typeSelect = wrap.querySelector('#q_type');
+      const existingOptions = q ? (safeParse(q.options) || []) : ['', ''];
+      const existingCorrect = q ? safeParse(q.correctAnswer) : null;
 
-  document.getElementById('genBtn').addEventListener('click', async () => {
-    await api.post('/codes/generate', {
-      unitId: unitSelect.value, count: +document.getElementById('codeCount').value,
-      prefix: document.getElementById('codePrefix').value
-    });
-    renderCodes();
+      function renderOptionsArea() {
+        const t = typeSelect.value;
+        if (t === 'mcq' || t === 'multi') {
+          const opts = existingOptions.length ? existingOptions : ['', '', '', ''];
+          optionsArea.innerHTML = `
+            <div class="field"><label>الاختيارات (حدد الإجابة الصحيحة)</label>
+              <div id="optRows">${opts.map((o, idx) => `
+                <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+                  <input type="${t === 'multi' ? 'checkbox' : 'radio'}" name="correctOpt" class="correctMark" value="${idx}" ${t === 'mcq' ? (String(existingCorrect) === String(idx) ? 'checked' : '') : ((existingCorrect || []).includes(idx) ? 'checked' : '')}>
+                  <input type="text" class="optText" data-idx="${idx}" value="${escapeHtml(o)}" placeholder="اختيار ${idx + 1}" style="flex:1;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-solid);color:var(--text)">
+                </div>`).join('')}</div>
+              <button type="button" class="btn sm secondary" id="addOptBtn">+ إضافة اختيار</button>
+            </div>`;
+          optionsArea.querySelector('#addOptBtn').addEventListener('click', () => {
+            const idx = optionsArea.querySelectorAll('.optText').length;
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center';
+            row.innerHTML = `<input type="${t === 'multi' ? 'checkbox' : 'radio'}" name="correctOpt" class="correctMark" value="${idx}">
+              <input type="text" class="optText" data-idx="${idx}" placeholder="اختيار ${idx + 1}" style="flex:1;padding:10px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-solid);color:var(--text)">`;
+            optionsArea.querySelector('#optRows').appendChild(row);
+          });
+        } else if (t === 'truefalse') {
+          optionsArea.innerHTML = `
+            <div class="field"><label>الإجابة الصحيحة</label>
+              <select id="tfCorrect">
+                <option value="0" ${String(existingCorrect) === '0' ? 'selected' : ''}>صح</option>
+                <option value="1" ${String(existingCorrect) === '1' ? 'selected' : ''}>خطأ</option>
+              </select>
+            </div>`;
+        } else if (t === 'fillblank') {
+          optionsArea.innerHTML = `<div class="field"><label>الإجابة الصحيحة</label><input type="text" id="fillCorrect" value="${existingCorrect || ''}"></div>`;
+        } else {
+          optionsArea.innerHTML = `<p style="color:var(--text-muted);font-size:13px">الأسئلة المقالية تحتاج تصحيحًا يدويًا من المدرّس بعد التسليم.</p>`;
+        }
+      }
+      typeSelect.addEventListener('change', renderOptionsArea);
+      renderOptionsArea();
+
+      wrap.querySelector('#qForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const t = typeSelect.value;
+        let options, correctAnswer;
+        if (t === 'mcq' || t === 'multi') {
+          options = Array.from(wrap.querySelectorAll('.optText')).map((i) => i.value.trim());
+          if (t === 'multi') {
+            correctAnswer = Array.from(wrap.querySelectorAll('.correctMark:checked')).map((i) => parseInt(i.value, 10));
+          } else {
+            const checked = wrap.querySelector('.correctMark:checked');
+            correctAnswer = checked ? parseInt(checked.value, 10) : null;
+          }
+        } else if (t === 'truefalse') {
+          options = ['صح', 'خطأ'];
+          correctAnswer = parseInt(document.getElementById('tfCorrect').value, 10);
+        } else if (t === 'fillblank') {
+          options = undefined;
+          correctAnswer = document.getElementById('fillCorrect').value.trim();
+        } else {
+          options = undefined; correctAnswer = undefined;
+        }
+        const payload = {
+          examId, type: t, text: document.getElementById('q_text').value.trim(),
+          options, correctAnswer, points: parseFloat(document.getElementById('q_points').value) || 1,
+          order: parseFloat(document.getElementById('q_order').value) || 0
+        };
+        try {
+          if (q) await api.patch(`/questions/${q.id}`, payload); else await api.post('/questions', payload);
+          closeModals(); toast('تم الحفظ ✅'); renderExamQuestions(examId);
+        } catch (err) { toast(err.message, 'error'); }
+      });
+    }
   });
-  app.querySelectorAll('[data-del-code]').forEach(b => b.addEventListener('click', async () => {
-    await api.del(`/codes/${b.dataset.delCode}`);
-    renderCodes();
-  }));
+}
+function deleteQuestion(id, examId) {
+  confirmAction('هل تريد حذف هذا السؤال؟', async () => {
+    try { await api.del(`/questions/${id}`); toast('تم الحذف'); renderExamQuestions(examId); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 
-// ---------- STUDENTS ----------
+// ---------- Students ----------
 async function renderStudents() {
-  loading();
-  const [students, units] = await Promise.all([api.get('/students'), api.get('/units')]);
-  const unitTitle = (id) => (units.find(u => u.id === id) || {}).title || id;
-  app.innerHTML = `
-    <h2>إدارة الطلاب</h2>
-    <table>
-      <thead><tr><th>الاسم</th><th>الكود</th><th>الوحدات</th><th></th></tr></thead>
-      <tbody>
-        ${students.map(s => `<tr>
-          <td>${esc(s.name)}</td><td>${esc(s.code)}</td>
-          <td>${(s.unitIds || '').split(',').filter(Boolean).map(unitTitle).join(', ')}</td>
-          <td><button class="btn danger" data-del-student="${s.id}">حذف</button></td>
-        </tr>`).join('') || '<tr><td colspan="4" class="empty-state">لا يوجد طلاب بعد</td></tr>'}
-      </tbody>
-    </table>`;
-  app.querySelectorAll('[data-del-student]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('حذف الطالب؟')) return;
-    await api.del(`/students/${b.dataset.delStudent}`);
-    renderStudents();
-  }));
-}
+  loading(app);
+  let students = [], units = [];
+  try { [students, units] = await Promise.all([api.get('/students'), api.get('/units')]); } catch (e) { toast(e.message, 'error'); return; }
 
-// ---------- RANKINGS ----------
-async function renderRankingsPicker() {
-  loading();
-  const units = await api.get('/units');
-  const examsPerUnit = await Promise.all(units.map(u => api.get(`/exams/unit/${u.id}`)));
-  const allExams = examsPerUnit.flat();
   app.innerHTML = `
-    <h2>الترتيب</h2>
-    <div class="grid cols-3">
-      ${allExams.map(e => `<a class="card" href="#/leaderboard-admin/${e.id}" data-exam="${e.id}"><b>${esc(e.title)}</b></a>`).join('') || '<p class="empty-state">لا يوجد اختبارات</p>'}
+    <div class="topbar-row">
+      <div><h1 class="page-title">الطلاب</h1><p class="page-sub">${students.length} طالب مسجّل</p></div>
+      <div class="search-box"><input id="studentSearch" placeholder="بحث بالاسم..."></div>
     </div>
-    <div id="rankingsTable" style="margin-top:16px"></div>`;
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>الاسم</th><th>الهاتف</th><th>الكود</th><th>الوحدات المتاحة</th><th>آخر دخول</th><th></th></tr></thead>
+      <tbody id="studentsBody">${studentsRows(students, units)}</tbody>
+    </table></div>`;
 
-  app.querySelectorAll('[data-exam]').forEach(el => el.addEventListener('click', async (e) => {
+  document.getElementById('studentSearch').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    const filtered = students.filter((s) => (s.name || '').toLowerCase().includes(q));
+    document.getElementById('studentsBody').innerHTML = studentsRows(filtered, units);
+  });
+}
+function studentsRows(students, units) {
+  if (!students.length) return `<tr><td colspan="6"><div class="empty-state"><div class="em">👥</div>لا يوجد طلاب بعد</div></td></tr>`;
+  return students.map((s) => {
+    const unitIds = (s.unitIds || '').split(',').filter(Boolean);
+    const unitNames = unitIds.map((id) => (units.find((u) => u.id === id) || {}).title).filter(Boolean);
+    return `<tr>
+      <td style="font-weight:700">${escapeHtml(s.name)}</td>
+      <td>${escapeHtml(s.phone || '—')}</td>
+      <td><code>${escapeHtml(s.code)}</code></td>
+      <td>${unitNames.map((n) => `<span class="status-pill active" style="margin-left:4px">${escapeHtml(n)}</span>`).join('') || '—'}</td>
+      <td style="color:var(--text-muted);font-size:12px">${s.lastLoginAt ? new Date(s.lastLoginAt).toLocaleDateString('ar-EG') : '—'}</td>
+      <td><button class="btn sm danger" onclick="deleteStudent('${s.id}')">حذف</button></td>
+    </tr>`;
+  }).join('');
+}
+function deleteStudent(id) {
+  confirmAction('هل تريد حذف هذا الطالب؟ سيفقد الوصول لكل الوحدات.', async () => {
+    try { await api.del(`/students/${id}`); toast('تم الحذف'); renderStudents(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
+// ---------- Codes ----------
+async function renderCodes() {
+  loading(app);
+  let units = []; try { units = await api.get('/units'); } catch (e) { toast(e.message, 'error'); return; }
+
+  app.innerHTML = `
+    <div class="topbar-row"><div><h1 class="page-title">أكواد الدخول</h1><p class="page-sub">توليد وإدارة أكواد الوصول للطلاب</p></div></div>
+    <div class="panel">
+      <h3>توليد أكواد جديدة</h3>
+      <form id="genForm">
+        <div class="field-row">
+          <div class="field"><label>الوحدة</label>
+            <select id="c_unit" required>${units.map((u) => `<option value="${u.id}">${escapeHtml(u.title)}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label>العدد</label><input type="number" id="c_count" value="10" min="1" max="1000" required></div>
+        </div>
+        <div class="field"><label>بادئة الكود (اختياري)</label><input id="c_prefix" placeholder="MFX"></div>
+        <button class="btn primary" id="genBtn">توليد الأكواد</button>
+      </form>
+      <div id="genResult"></div>
+    </div>
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <h3 style="margin:0">الأكواد الحالية</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="filterUnit" style="padding:9px 12px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface-solid);color:var(--text)">
+            <option value="">كل الوحدات</option>
+            ${units.map((u) => `<option value="${u.id}">${escapeHtml(u.title)}</option>`).join('')}
+          </select>
+          <button class="btn sm secondary" id="exportExcelBtn">⬇️ Excel</button>
+          <button class="btn sm secondary" id="exportPdfBtn">⬇️ PDF</button>
+          <button class="btn sm secondary" id="printBtn">🖨️ طباعة</button>
+        </div>
+      </div>
+      <div id="codesTableWrap"></div>
+    </div>`;
+
+  async function loadCodes() {
+    const unitId = document.getElementById('filterUnit').value;
+    const codes = await api.get(`/codes${unitId ? '?unitId=' + unitId : ''}`);
+    document.getElementById('codesTableWrap').innerHTML = `
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>الكود</th><th>الحالة</th><th>الطالب</th><th></th></tr></thead>
+        <tbody>${codes.length ? codes.map((c) => `
+          <tr><td><code>${escapeHtml(c.code)}</code></td>
+          <td><span class="status-pill ${c.status}">${c.status === 'active' ? 'مفعّل' : 'غير مستخدم'}</span></td>
+          <td>${escapeHtml(c.studentName || '—')}</td>
+          <td><button class="btn sm danger" onclick="deleteCode('${c.id}')">حذف</button></td></tr>`).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="em">🔑</div>لا توجد أكواد بعد</div></td></tr>`}
+        </tbody></table></div>`;
+  }
+  document.getElementById('filterUnit').addEventListener('change', loadCodes);
+  document.getElementById('exportExcelBtn').addEventListener('click', () => downloadExport('/codes/export/excel', document.getElementById('filterUnit').value, 'access-codes.xlsx'));
+  document.getElementById('exportPdfBtn').addEventListener('click', () => downloadExport('/codes/export/pdf', document.getElementById('filterUnit').value, 'access-codes.pdf'));
+  document.getElementById('printBtn').addEventListener('click', async () => {
+    const unitId = document.getElementById('filterUnit').value;
+    try {
+      const res = await api.get('/codes/print' + (unitId ? '?unitId=' + unitId : ''));
+      const html = await res.text();
+      const win = window.open('', '_blank');
+      win.document.open(); win.document.write(html); win.document.close();
+    } catch (e) { toast('تعذّر فتح صفحة الطباعة', 'error'); }
+  });
+
+  document.getElementById('genForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const rankings = await api.get(`/attempts/exam/${el.dataset.exam}/rankings`);
-    document.getElementById('rankingsTable').innerHTML = `
-      <table><thead><tr><th>#</th><th>الاسم</th><th>الدرجة</th></tr></thead>
-      <tbody>${rankings.map(r => `<tr><td>${r.rank}</td><td>${esc(r.studentName)}</td><td>${r.percentage}%</td></tr>`).join('')}</tbody></table>`;
-  }));
+    const btn = document.getElementById('genBtn'); btn.disabled = true; btn.textContent = 'جاري التوليد...';
+    try {
+      const codes = await api.post('/codes/generate', {
+        unitId: document.getElementById('c_unit').value,
+        count: parseInt(document.getElementById('c_count').value, 10),
+        prefix: document.getElementById('c_prefix').value.trim()
+      });
+      document.getElementById('genResult').innerHTML = `
+        <p style="color:var(--success);font-weight:700;margin-top:16px">تم توليد ${codes.length} كود بنجاح ✅</p>
+        <div class="codes-grid">${codes.map((c) => `<div class="code-chip">${escapeHtml(c.code)}</div>`).join('')}</div>`;
+      toast('تم توليد الأكواد ✅'); loadCodes();
+    } catch (err) { toast(err.message, 'error'); }
+    btn.disabled = false; btn.textContent = 'توليد الأكواد';
+  });
+
+  loadCodes();
+}
+async function downloadExport(path, unitId, filename) {
+  try {
+    const res = await api.get(path + (unitId ? '?unitId=' + unitId : ''));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { toast('تعذّر تنزيل الملف', 'error'); }
+}
+function deleteCode(id) {
+  confirmAction('هل تريد حذف هذا الكود؟', async () => {
+    try { await api.del(`/codes/${id}`); toast('تم الحذف'); renderCodes(); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 
-// ---------- ANALYTICS ----------
+// ---------- Analytics ----------
 async function renderAnalytics() {
-  loading();
-  const [topStudents, videoStats, examStats] = await Promise.all([
-    api.get('/analytics/top-students'), api.get('/analytics/video-stats'), api.get('/analytics/exam-stats')
-  ]);
+  loading(app);
+  let overview, topStudents, examStats, videoStats;
+  try {
+    [overview, topStudents, examStats, videoStats] = await Promise.all([
+      api.get('/analytics/overview'), api.get('/analytics/top-students'),
+      api.get('/analytics/exam-stats'), api.get('/analytics/video-stats')
+    ]);
+  } catch (e) { toast(e.message, 'error'); return; }
+
   app.innerHTML = `
-    <h2>التحليلات</h2>
-    <div class="grid cols-2">
-      <div class="card">
-        <h3>أفضل الطلاب</h3>
-        ${topStudents.top.map(s => `<div>${esc(s.name)} — ${s.average}%</div>`).join('') || '<p class="empty-state">لا توجد بيانات</p>'}
-      </div>
-      <div class="card">
-        <h3>الأضعف تحصيلًا</h3>
-        ${topStudents.lowest.map(s => `<div>${esc(s.name)} — ${s.average}%</div>`).join('') || '<p class="empty-state">لا توجد بيانات</p>'}
-      </div>
-      <div class="card">
-        <h3>الأكثر مشاهدة</h3>
-        ${videoStats.mostWatched.map(v => `<div>${esc(v.title)} — ${v.views} مشاهدة</div>`).join('') || '<p class="empty-state">لا توجد بيانات</p>'}
-      </div>
-      <div class="card">
-        <h3>إحصائيات الاختبارات</h3>
-        ${examStats.map(e => `<div>${esc(e.title)} — متوسط ${e.averagePercentage}% — نجاح ${e.passRate}%</div>`).join('') || '<p class="empty-state">لا توجد بيانات</p>'}
-      </div>
+    <div class="topbar-row"><div><h1 class="page-title">الإحصائيات والتقارير</h1><p class="page-sub">أداء الطلاب والمحتوى</p></div></div>
+
+    <div class="panel">
+      <h3>🏆 أفضل 10 طلاب (متوسط الدرجات)</h3>
+      <div class="bar-list">${topStudents.top.length ? topStudents.top.map((t) => `
+        <div class="bar-row"><span>${escapeHtml(t.name)}</span><div class="bar-track"><div class="bar-fill" style="width:${t.average}%"></div></div><span>${t.average}%</span></div>
+      `).join('') : '<p style="color:var(--text-muted)">لا توجد بيانات كافية بعد</p>'}</div>
+    </div>
+
+    <div class="panel">
+      <h3>📝 أداء الامتحانات</h3>
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>الامتحان</th><th>عدد المحاولات</th><th>متوسط الدرجات</th><th>نسبة النجاح</th></tr></thead>
+        <tbody>${examStats.length ? examStats.map((e) => `
+          <tr><td>${escapeHtml(e.title)}</td><td>${e.attempts}</td><td>${e.averagePercentage}%</td><td>${e.passRate}%</td></tr>
+        `).join('') : `<tr><td colspan="4"><div class="empty-state"><div class="em">📊</div>لا توجد بيانات بعد</div></td></tr>`}</tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h3>🎬 الفيديوهات الأكثر مشاهدة</h3>
+      <div class="bar-list">${videoStats.mostWatched.length ? videoStats.mostWatched.map((v) => `
+        <div class="bar-row"><span>${escapeHtml(v.title)}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100, v.views * 10)}%"></div></div><span>${v.views}</span></div>
+      `).join('') : '<p style="color:var(--text-muted)">لا توجد بيانات كافية بعد</p>'}</div>
     </div>`;
 }
 
-// ---------- REPORTS ----------
-async function renderReports() {
-  loading();
-  const [bookStats, unitPerf] = await Promise.all([api.get('/analytics/book-stats'), api.get('/analytics/unit-performance')]);
-  app.innerHTML = `
-    <h2>التقارير</h2>
-    <div class="grid cols-2">
-      <div class="card">
-        <h3>الكتب المقروءة</h3>
-        <table><thead><tr><th>الكتاب</th><th>فتحوه</th><th>أنهوه</th></tr></thead>
-        <tbody>${bookStats.map(b => `<tr><td>${esc(b.title)}</td><td>${b.opened}</td><td>${b.finished}</td></tr>`).join('')}</tbody></table>
-      </div>
-      <div class="card">
-        <h3>أداء الوحدات</h3>
-        <table><thead><tr><th>الوحدة</th><th>المحاولات</th><th>المتوسط</th></tr></thead>
-        <tbody>${unitPerf.map(u => `<tr><td>${esc(u.title)}</td><td>${u.attempts}</td><td>${u.averagePercentage}%</td></tr>`).join('')}</tbody></table>
-      </div>
-    </div>`;
-}
-
-// ---------- NOTIFICATIONS ----------
-async function renderNotifications() {
-  loading();
-  const notifications = await api.get('/notifications');
-  app.innerHTML = `
-    <h2>الإشعارات</h2>
-    <button class="btn secondary" id="readAllBtn">تعليم الكل كمقروء</button>
-    <div class="grid cols-2" style="margin-top:14px">
-      ${notifications.map(n => `
-        <div class="card" style="${String(n.isRead) === 'true' ? 'opacity:.6' : ''}">
-          <b>${esc(n.title)}</b><p>${esc(n.message)}</p>
-          <small style="color:var(--text-muted)">${new Date(n.createdAt).toLocaleString('ar-EG')}</small>
-        </div>`).join('') || '<p class="empty-state">لا توجد إشعارات</p>'}
-    </div>`;
-  document.getElementById('readAllBtn').addEventListener('click', async () => {
-    await api.post('/notifications/read-all');
-    renderNotifications();
-  });
-}
-
-// ---------- SETTINGS ----------
+// ---------- Settings ----------
 async function renderSettings() {
-  loading();
-  const settings = await api.get('/settings');
-  const map = Object.fromEntries(settings.map(s => [s.key, s.value]));
+  loading(app);
+  let settings = []; try { settings = await api.get('/settings'); } catch (e) { toast(e.message, 'error'); return; }
+  const map = Object.fromEntries(settings.map((s) => [s.key, s.value]));
+
   app.innerHTML = `
-    <h2>الإعدادات</h2>
-    <div class="card" style="max-width:480px">
-      <label>اسم المنصة</label><input id="setPlatformName" value="${esc(map.platformName || '')}">
-      <label style="margin-top:10px"><input id="setDarkMode" type="checkbox" ${map.defaultDarkMode === 'true' ? 'checked' : ''}> الوضع الليلي افتراضيًا</label>
-      <button class="btn" id="saveSettings" style="margin-top:14px">حفظ</button>
+    <div class="topbar-row"><div><h1 class="page-title">الإعدادات</h1><p class="page-sub">إعدادات المنصة العامة</p></div></div>
+    <div class="panel">
+      <h3>الإعدادات العامة</h3>
+      <form id="settingsForm">
+        <div class="field"><label>اسم المنصة</label><input id="s_name" value="${escapeHtml(map.platformName || '')}"></div>
+        <div class="checkbox-row"><input type="checkbox" id="s_dark" ${map.defaultDarkMode === 'true' ? 'checked' : ''}><label>الوضع الليلي كافتراضي للطلاب</label></div>
+        <button class="btn primary" id="saveSettingsBtn">حفظ الإعدادات</button>
+      </form>
     </div>`;
-  document.getElementById('saveSettings').addEventListener('click', async () => {
-    await api.post('/settings', { key: 'platformName', value: document.getElementById('setPlatformName').value });
-    await api.post('/settings', { key: 'defaultDarkMode', value: String(document.getElementById('setDarkMode').checked) });
-    alert('تم الحفظ');
+
+  document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api.post('/settings', { key: 'platformName', value: document.getElementById('s_name').value.trim() });
+      await api.post('/settings', { key: 'defaultDarkMode', value: String(document.getElementById('s_dark').checked) });
+      toast('تم حفظ الإعدادات ✅');
+    } catch (err) { toast(err.message, 'error'); }
   });
 }
+
+// ---------- Boot ----------
+function boot() {
+  initTheme();
+  if (!AdminAuth.isLoggedIn()) { renderLoginScreen(); return; }
+  renderShell();
+  renderPage();
+}
+boot();
