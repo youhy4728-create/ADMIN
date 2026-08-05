@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>نشاط الطالب | MFX Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <aside class="dash-sidebar">
+    <div class="logo" style="margin-bottom:32px; padding:0 8px;">
+      <div class="logo-mark">👨‍🏫</div>
+      <span class="text-gradient">MFX Admin</span>
+    </div>
+    <nav>
+      <a href="index.html" class="dash-nav-item"><span>📊</span> لوحة التحكم</a>
+      <a href="codes.html" class="dash-nav-item"><span>🎫</span> توليد الأكواد</a>
+      <a href="students.html" class="dash-nav-item active"><span>👥</span> الطلاب</a>
+      <a href="exams.html" class="dash-nav-item"><span>📝</span> النتائج والامتحانات</a>
+      <a href="presentations.html" class="dash-nav-item"><span>📊</span> العروض التقديمية</a>
+      <a href="chat.html" class="dash-nav-item"><span>💬</span> المحادثات</a>
+      <a href="#" class="dash-nav-item" onclick="logout()" style="margin-top:auto; color:var(--danger);"><span>🚪</span> خروج</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <a href="students.html" class="btn btn-ghost btn-sm" style="margin-bottom:16px;">← رجوع لقائمة الطلاب</a>
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; flex-wrap:wrap; gap:16px;">
+      <div>
+        <h1 style="font-size:1.6rem;" id="detail-name">⏳ جاري التحميل...</h1>
+        <p style="color:var(--text-secondary); margin-top:4px;">
+          الكود: <span id="detail-code" style="font-family:monospace;">—</span>
+          · آخر دخول: <span id="detail-last-login">—</span>
+        </p>
+      </div>
+      <a href="#" id="detail-chat-link" class="btn btn-primary">💬 مراسلة الطالب</a>
+    </div>
+
+    <div class="grid-4" style="margin-bottom:32px;">
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="detail-videos-watched">—</div>
+        <div class="stat-label">فيديو تم مشاهدته</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="detail-exams-taken">—</div>
+        <div class="stat-label">امتحان</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="detail-comments-count">—</div>
+        <div class="stat-label">تعليق</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="detail-units-count">—</div>
+        <div class="stat-label">كورس مسجل</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px;" id="detail-grid">
+      <div>
+        <h3 style="margin-bottom:14px;">🎥 نشاط الفيديو</h3>
+        <div id="detail-videos" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:14px;">📝 نتائج الامتحانات</h3>
+        <div id="detail-exams" style="display:flex; flex-direction:column; gap:8px;"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:32px;">
+      <h3 style="margin-bottom:14px;">💬 تعليقات الطالب على الفيديوهات</h3>
+      <div id="detail-comments" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+  </main>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

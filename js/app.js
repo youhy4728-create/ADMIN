@@ -1,5 +1,5 @@
 // ===== MFX Admin App =====
-const API = 'https://mrmomd-production.up.railway.app/api';
+const API = '/api';
 
 function toast(msg) {
   let t = document.querySelector('.toast');
@@ -159,29 +159,262 @@ async function generateCodes() {
 }
 
 // Students
+let allStudentsCache = [];
 async function loadStudentsPage() {
   try {
     const data = await api('/students');
-    const tbody = document.getElementById('students-table');
-    if (!tbody) return;
-    if (!data.students || !data.students.length) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-muted);">لا يوجد طلاب</td></tr>';
-      return;
+    allStudentsCache = data.students || [];
+    renderStudentsTable(allStudentsCache);
+  } catch (e) {}
+}
+
+function renderStudentsTable(students) {
+  const tbody = document.getElementById('students-table');
+  const emptySearch = document.getElementById('students-empty-search');
+  if (!tbody) return;
+  if (!students.length) {
+    tbody.innerHTML = '';
+    if (emptySearch) emptySearch.style.display = 'block';
+    return;
+  }
+  if (emptySearch) emptySearch.style.display = 'none';
+  tbody.innerHTML = students.map(s => `
+    <tr>
+      <td style="font-weight:600;">${s.name}</td>
+      <td style="font-family:monospace; color:var(--text-muted);">${s.code}</td>
+      <td>${s.courseTitle || '—'}</td>
+      <td>
+        <div class="prog" style="width:100px;"><div class="prog-fill" style="width:${s.progress || 0}%"></div></div>
+        <span style="font-size:0.8rem; color:var(--text-muted);">${s.progress || 0}%</span>
+      </td>
+      <td>${s.examsTaken || 0}</td>
+      <td style="font-weight:700; color:${s.avgScore >= 50 ? 'var(--success)' : 'var(--danger)'}">${s.avgScore != null ? s.avgScore + '%' : '—'}</td>
+      <td>${s.videosWatched || 0}/${s.totalVideos || 0} <span style="color:var(--text-muted); font-size:0.8rem;">فيديو</span></td>
+      <td style="display:flex; gap:6px;">
+        <a href="student-detail.html?id=${s.id}" class="btn btn-secondary btn-sm">👁️ عرض</a>
+        <a href="chat.html?studentId=${s.id}" class="btn btn-ghost btn-sm">💬</a>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterStudents() {
+  const q = (document.getElementById('student-search')?.value || '').trim().toLowerCase();
+  if (!q) { renderStudentsTable(allStudentsCache); return; }
+  const filtered = allStudentsCache.filter(s => (s.name || '').toLowerCase().includes(q) || (s.code || '').toLowerCase().includes(q));
+  renderStudentsTable(filtered);
+}
+
+// Student detail (activity view reached from the search/list page)
+async function loadStudentDetailPage() {
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id');
+  if (!id) { toast('❌ طالب غير موجود'); return; }
+  try {
+    const res = await api('/students/' + id + '/activity');
+    if (!res.ok) { toast('❌ ' + (res.error || 'فشل تحميل بيانات الطالب')); return; }
+    const d = res.data;
+
+    document.getElementById('detail-name').textContent = d.student.name || '—';
+    document.getElementById('detail-code').textContent = d.student.code || '—';
+    document.getElementById('detail-last-login').textContent = d.student.lastLoginAt ? new Date(d.student.lastLoginAt).toLocaleString('ar-EG') : '—';
+    document.getElementById('detail-chat-link').href = 'chat.html?studentId=' + id;
+
+    document.getElementById('detail-videos-watched').textContent = d.videosWatched || 0;
+    document.getElementById('detail-exams-taken').textContent = (d.examActivity || []).length;
+    document.getElementById('detail-comments-count').textContent = (d.comments || []).length;
+    document.getElementById('detail-units-count').textContent = (d.enrolledUnits || []).length;
+
+    const videosBox = document.getElementById('detail-videos');
+    videosBox.innerHTML = (d.videoActivity || []).length
+      ? d.videoActivity.map(v => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+            <span>${v.videoTitle}</span>
+            <span class="badge ${v.status === 'finished' ? 'badge-ok' : 'badge-info'}">${v.status === 'finished' ? '✓ خلص' : v.watchPercentage + '%'}</span>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ما شافش أي فيديو</p>';
+
+    const examsBox = document.getElementById('detail-exams');
+    examsBox.innerHTML = (d.examActivity || []).length
+      ? d.examActivity.map(e => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+            <span>${e.examTitle}</span>
+            <span style="font-weight:700; color:${e.percentage >= 50 ? 'var(--success)' : 'var(--danger)'};">${e.percentage}%</span>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ما دخلش أي امتحان</p>';
+
+    const commentsBox = document.getElementById('detail-comments');
+    commentsBox.innerHTML = (d.comments || []).length
+      ? d.comments.map(c => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:4px;">على فيديو: ${c.videoTitle}</div>
+            <div>${c.text}</div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ماعملش أي تعليق</p>';
+  } catch (e) { toast('❌ فشل تحميل بيانات الطالب'); }
+}
+
+// Presentations (PowerPoint) management
+async function loadPresentationsPage() {
+  try {
+    const units = (await api('/units')).data || [];
+    const select = document.getElementById('pres-unit');
+    if (select) {
+      select.innerHTML = '<option value="">اختر الكورس</option>' + units.map(u => `<option value="${u.id}">${u.title}</option>`).join('');
     }
-    tbody.innerHTML = data.students.map(s => `
-      <tr>
-        <td style="font-weight:600;">${s.name}</td>
-        <td style="font-family:monospace; color:var(--text-muted);">${s.code}</td>
-        <td>${s.courseTitle || '—'}</td>
-        <td>
-          <div class="prog" style="width:100px;"><div class="prog-fill" style="width:${s.progress || 0}%"></div></div>
-          <span style="font-size:0.8rem; color:var(--text-muted);">${s.progress || 0}%</span>
-        </td>
-        <td>${s.examsTaken || 0}</td>
-        <td style="font-weight:700; color:${s.avgScore >= 50 ? 'var(--success)' : 'var(--danger)'}">${s.avgScore != null ? s.avgScore + '%' : '—'}</td>
-        <td>${s.videosWatched || 0}/${s.totalVideos || 0} <span style="color:var(--text-muted); font-size:0.8rem;">فيديو</span></td>
-      </tr>
-    `).join('');
+  } catch (e) {}
+}
+
+async function uploadPresentation() {
+  const unitId = document.getElementById('pres-unit')?.value;
+  const title = document.getElementById('pres-title')?.value.trim();
+  const fileInput = document.getElementById('pres-file');
+  const file = fileInput?.files?.[0];
+  if (!unitId) { toast('❌ اختر الكورس أولاً'); return; }
+  if (!title) { toast('❌ اكتب عنوان العرض'); return; }
+  if (!file) { toast('❌ اختر ملف بوربوينت'); return; }
+
+  toast('⏳ جاري رفع الملف...');
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('subfolder', 'presentations');
+    const token = getToken();
+    const uploadRes = await fetch(API + '/upload', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: formData
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadData.ok) { toast('❌ ' + (uploadData.error || 'فشل رفع الملف')); return; }
+
+    const created = await api('/presentations', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId, title,
+        driveFileId: uploadData.data.driveFileId,
+        driveUrl: uploadData.data.driveUrl
+      })
+    });
+    if (created.ok) {
+      toast('✅ تم رفع العرض التقديمي');
+      document.getElementById('pres-title').value = '';
+      fileInput.value = '';
+      loadPresentationsList(unitId);
+    } else {
+      toast('❌ ' + (created.error || 'فشل حفظ العرض'));
+    }
+  } catch (e) { toast('❌ فشل رفع الملف'); }
+}
+
+async function loadPresentationsList(unitId) {
+  const list = document.getElementById('pres-list');
+  if (!list) return;
+  if (!unitId) { list.innerHTML = ''; return; }
+  try {
+    const res = await api('/presentations/unit/' + unitId);
+    const items = res.data || [];
+    list.innerHTML = items.length
+      ? items.map(p => `
+          <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
+            <span>📊 ${p.title}</span>
+            <div style="display:flex; gap:8px;">
+              <a href="${p.driveUrl}" target="_blank" class="btn btn-ghost btn-sm">فتح</a>
+              <button class="btn btn-danger btn-sm" onclick="deletePresentation('${p.id}', '${unitId}')">حذف</button>
+            </div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لا توجد عروض تقديمية لهذا الكورس بعد</p>';
+  } catch (e) {}
+}
+
+async function deletePresentation(id, unitId) {
+  try {
+    await api('/presentations/' + id, { method: 'DELETE' });
+    toast('✅ تم الحذف');
+    loadPresentationsList(unitId);
+  } catch (e) {}
+}
+
+// Chat (admin side: thread list + one conversation)
+let adminChatPollTimer = null;
+async function loadChatPage() {
+  const params = new URLSearchParams(location.search);
+  const studentId = params.get('studentId');
+  await loadChatThreads();
+  if (studentId) openChatThread(studentId);
+  if (adminChatPollTimer) clearInterval(adminChatPollTimer);
+  adminChatPollTimer = setInterval(loadChatThreads, 10000);
+}
+
+async function loadChatThreads() {
+  const list = document.getElementById('chat-threads');
+  if (!list) return;
+  try {
+    const res = await api('/chat/threads');
+    const threads = res.data || [];
+    list.innerHTML = threads.length
+      ? threads.map(t => `
+          <div class="dash-nav-item" style="cursor:pointer;" onclick="openChatThread('${t.studentId}')">
+            <span>${t.unread > 0 ? '🔴' : '👤'}</span>
+            <div style="flex:1; overflow:hidden;">
+              <div style="font-weight:600;">${t.studentName}</div>
+              <div style="color:var(--text-muted); font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${t.lastMessage || ''}</div>
+            </div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted); padding:12px;">لا توجد محادثات بعد</p>';
+  } catch (e) {}
+}
+
+let currentChatStudentId = null;
+async function openChatThread(studentId) {
+  currentChatStudentId = studentId;
+  const title = document.getElementById('chat-with-title');
+  try {
+    const students = (await api('/students')).students || [];
+    const student = students.find(s => s.id === studentId);
+    if (title) title.textContent = student ? ('💬 ' + student.name) : '💬 المحادثة';
+  } catch (e) {}
+  await refreshAdminChatMessages();
+}
+
+async function refreshAdminChatMessages() {
+  if (!currentChatStudentId) return;
+  const box = document.getElementById('chat-messages');
+  if (!box) return;
+  try {
+    const res = await api('/chat/' + currentChatStudentId);
+    const messages = res.data || [];
+    box.innerHTML = messages.length
+      ? messages.map(m => {
+          const fromAdmin = m.senderRole === 'admin';
+          return `
+            <div style="align-self:${fromAdmin ? 'flex-start' : 'flex-end'}; max-width:75%;">
+              <div style="background:${fromAdmin ? 'var(--accent)' : 'var(--bg)'}; color:${fromAdmin ? '#fff' : 'var(--text)'}; padding:10px 14px; border-radius:var(--radius-md); line-height:1.6;">
+                ${m.text}
+              </div>
+            </div>
+          `;
+        }).join('')
+      : '<p style="color:var(--text-muted); text-align:center; padding:24px;">ابدأ المحادثة مع الطالب</p>';
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+
+async function sendAdminChatMessage() {
+  if (!currentChatStudentId) { toast('❌ اختر طالب أولاً'); return; }
+  const input = document.getElementById('chat-input');
+  const text = input?.value.trim();
+  if (!text) return;
+  input.value = '';
+  try {
+    await api('/chat/' + currentChatStudentId, { method: 'POST', body: JSON.stringify({ text }) });
+    await refreshAdminChatMessages();
+    loadChatThreads();
   } catch (e) {}
 }
 
@@ -260,4 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (path.includes('codes.html')) loadCodesPage();
   if (path.includes('students.html')) loadStudentsPage();
   if (path.includes('exams.html')) loadExamsPage();
+  if (path.includes('student-detail.html')) loadStudentDetailPage();
+  if (path.includes('presentations.html')) loadPresentationsPage();
+  if (path.includes('chat.html')) loadChatPage();
 });
