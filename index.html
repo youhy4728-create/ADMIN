@@ -1,19 +1,70 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl" data-theme="light">
+<html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>لوحة تحكم المدرّس — مامدوح فخري</title>
-<link rel="stylesheet" href="/admin/assets/css/admin.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>لوحة المعلم | MFX Admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="shell" class="admin-shell" style="display:none">
-    <div class="sidebar" id="sidebar"></div>
-    <div class="main-content" id="app"></div>
-  </div>
-  <div id="loginScreen"></div>
+  <aside class="dash-sidebar">
+    <div class="logo" style="margin-bottom:32px; padding:0 8px;">
+      <div class="logo-mark">👨‍🏫</div>
+      <span class="text-gradient">MFX Admin</span>
+    </div>
+    <nav>
+      <a href="index.html" class="dash-nav-item active"><span>📊</span> لوحة التحكم</a>
+      <a href="codes.html" class="dash-nav-item"><span>🎫</span> توليد الأكواد</a>
+      <a href="students.html" class="dash-nav-item"><span>👥</span> الطلاب</a>
+      <a href="exams.html" class="dash-nav-item"><span>📝</span> النتائج والامتحانات</a>
+      <a href="#" class="dash-nav-item" onclick="logout()" style="margin-top:auto; color:var(--danger);"><span>🚪</span> خروج</a>
+    </nav>
+  </aside>
 
-  <script src="/admin/assets/js/api.js"></script>
-  <script src="/admin/assets/js/admin.js"></script>
+  <main class="dash-main">
+    <div style="margin-bottom:32px;">
+      <h1 style="font-size:1.6rem;">لوحة تحكم المعلم</h1>
+      <p style="color:var(--text-secondary); margin-top:4px;">نظرة عامة على المنصة</p>
+    </div>
+
+    <div class="grid-4" style="margin-bottom:32px;">
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="stat-students">—</div>
+        <div class="stat-label">طالب مسجل</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="stat-courses">—</div>
+        <div class="stat-label">كورس</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="stat-exams">—</div>
+        <div class="stat-label">امتحان</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-gradient" id="stat-codes">—</div>
+        <div class="stat-label">كود نشط</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 32px;">
+      <div>
+        <h2 style="font-size:1.2rem; margin-bottom:16px;">📈 آخر النشاطات</h2>
+        <div id="recent-activity">
+          <div class="skel" style="height:60px; margin-bottom:8px;"></div>
+          <div class="skel" style="height:60px; margin-bottom:8px;"></div>
+        </div>
+      </div>
+      <div>
+        <h2 style="font-size:1.2rem; margin-bottom:16px;">🏆 أفضل الطلاب</h2>
+        <div id="top-students">
+          <div class="skel" style="height:60px; margin-bottom:8px;"></div>
+          <div class="skel" style="height:60px; margin-bottom:8px;"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="js/app.js"></script>
 </body>
 </html>
