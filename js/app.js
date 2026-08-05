@@ -514,16 +514,230 @@ async function sendAdminChatMessage() {
 }
 
 // Exams / Results
+let currentManageExamId = null;
+
 async function loadExamsPage() {
+  // Course dropdown for exam management
   try {
-    // Load exams dropdown
-    const examsData = await api('/exams');
-    const select = document.getElementById('exam-select');
-    if (select && examsData.exams) {
-      select.innerHTML = '<option value="">جميع الامتحانات</option>' + 
-        examsData.exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+    const unitsRes = await api('/units');
+    const units = unitsRes && unitsRes.data ? unitsRes.data : [];
+    const courseSelect = document.getElementById('manage-course-select');
+    if (courseSelect) {
+      courseSelect.innerHTML = '<option value="">اختر الكورس</option>' +
+        units.map(u => `<option value="${u.id}">${u.title}</option>`).join('');
     }
-    loadExamResults();
+  } catch (e) {}
+
+  // Exam dropdown for the results filter (admin-only listing)
+  try {
+    const examsRes = await api('/exams/admin/all');
+    const exams = examsRes && examsRes.data ? examsRes.data : [];
+    const select = document.getElementById('exam-select');
+    if (select) {
+      select.innerHTML = '<option value="">جميع الامتحانات</option>' +
+        exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+    }
+  } catch (e) {}
+
+  loadExamResults();
+}
+
+async function loadUnitExams() {
+  const unitId = document.getElementById('manage-course-select')?.value;
+  const wrap = document.getElementById('unit-exams-list');
+  const addBtn = document.getElementById('add-exam-btn');
+  closeAddExamForm();
+  closeQuestionsPanel();
+  if (!unitId) { wrap.style.display = 'none'; addBtn.style.display = 'none'; return; }
+  addBtn.style.display = 'inline-block';
+  wrap.style.display = 'block';
+  wrap.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/exams/unit/' + unitId);
+    const exams = res && res.data ? res.data : [];
+    if (!exams.length) {
+      wrap.innerHTML = '<p style="color:var(--text-muted);">مفيش امتحانات في الكورس ده لسه.</p>';
+      return;
+    }
+    wrap.innerHTML = exams.map(e => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px;">
+        <div>
+          <span class="badge ${e.status === 'published' ? 'badge-ok' : 'badge-warn'}">${e.status === 'published' ? '✓ منشور' : (e.status === 'hidden' ? 'مخفي' : 'مسودة')}</span>
+          <strong style="margin-right:8px;">${escapeHtmlAdmin(e.title)}</strong>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="openQuestionsPanel('${e.id}', '${escapeHtmlAdmin(e.title)}')">❓ الأسئلة</button>
+          ${e.status === 'published'
+            ? `<button class="btn btn-secondary btn-sm" onclick="hideExam('${e.id}')">🙈 إخفاء</button>`
+            : `<button class="btn btn-primary btn-sm" onclick="publishExam('${e.id}')">🚀 نشر</button>`}
+          <button class="btn btn-danger btn-sm" onclick="deleteExam('${e.id}')">🗑</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+function openAddExamForm() { document.getElementById('exam-form-wrap').style.display = 'block'; }
+function closeAddExamForm() {
+  const wrap = document.getElementById('exam-form-wrap');
+  if (wrap) wrap.style.display = 'none';
+  ['exam-title'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+}
+
+async function saveExam() {
+  const unitId = document.getElementById('manage-course-select')?.value;
+  const title = document.getElementById('exam-title')?.value.trim();
+  if (!unitId) { toast('❌ اختر الكورس الأول'); return; }
+  if (!title) { toast('❌ اكتب عنوان الامتحان'); return; }
+  try {
+    const res = await api('/exams', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId, title,
+        timerMinutes: parseInt(document.getElementById('exam-timer')?.value) || 0,
+        maxAttempts: parseInt(document.getElementById('exam-attempts')?.value) || 1,
+        passingScore: parseInt(document.getElementById('exam-passing')?.value) || 50,
+        shuffleQuestions: document.getElementById('exam-shuffle')?.checked || false,
+        negativeMarking: document.getElementById('exam-negative')?.checked || false
+      })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الامتحان (مسودة — دوس نشر عشان يظهر للطلاب)');
+      closeAddExamForm();
+      loadUnitExams();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الامتحان'));
+    }
+  } catch (e) {}
+}
+
+async function publishExam(id) {
+  try { const res = await api('/exams/' + id + '/publish', { method: 'POST' }); if (res?.ok) { toast('✅ الامتحان بقى منشور'); loadUnitExams(); } } catch (e) {}
+}
+async function hideExam(id) {
+  try { const res = await api('/exams/' + id + '/hide', { method: 'POST' }); if (res?.ok) { toast('✅ تم إخفاء الامتحان'); loadUnitExams(); } } catch (e) {}
+}
+async function deleteExam(id) {
+  if (!confirm('حذف الامتحان هيمسح كل أسئلته كمان. متأكد؟')) return;
+  try { const res = await api('/exams/' + id, { method: 'DELETE' }); if (res?.ok) { toast('✅ تم حذف الامتحان'); loadUnitExams(); } } catch (e) {}
+}
+
+// ----- Questions -----
+function openQuestionsPanel(examId, examTitle) {
+  currentManageExamId = examId;
+  document.getElementById('questions-wrap').style.display = 'block';
+  document.getElementById('questions-exam-title').textContent = examTitle;
+  renderQuestionFields();
+  loadQuestions();
+  document.getElementById('questions-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeQuestionsPanel() {
+  currentManageExamId = null;
+  const wrap = document.getElementById('questions-wrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+async function loadQuestions() {
+  if (!currentManageExamId) return;
+  const list = document.getElementById('questions-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/questions/exam/' + currentManageExamId);
+    const questions = res && res.data ? res.data : [];
+    if (!questions.length) {
+      list.innerHTML = '<p style="color:var(--text-muted);">مفيش أسئلة لسه — ضيف أول سؤال تحت.</p>';
+      return;
+    }
+    const typeLabels = { mcq: 'اختيار من متعدد', truefalse: 'صح/غلط', multi: 'اختيار متعدد', fillblank: 'ملء فراغ', essay: 'مقالي', image: 'صورة' };
+    list.innerHTML = questions.map((q, i) => `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px;">
+        <div>
+          <span class="badge badge-info">${typeLabels[q.type] || q.type}</span>
+          <span style="margin-right:8px; font-weight:600;">${i + 1}. ${escapeHtmlAdmin(q.text)}</span>
+          <div style="color:var(--text-muted); font-size:0.8rem; margin-top:4px;">${q.points || 1} درجة</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteQuestion('${q.id}')">🗑</button>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+function renderQuestionFields() {
+  const type = document.getElementById('q-type')?.value;
+  const wrap = document.getElementById('q-dynamic-fields');
+  if (!wrap) return;
+  if (type === 'mcq' || type === 'multi') {
+    wrap.innerHTML = `
+      <div class="form-group">
+        <label>الاختيارات (كل اختيار في سطر)</label>
+        <textarea class="inp" id="q-options" rows="4" placeholder="اختيار 1&#10;اختيار 2&#10;اختيار 3"></textarea>
+      </div>
+      <div class="form-group">
+        <label>${type === 'multi' ? 'الإجابات الصحيحة (كل واحدة في سطر، لازم تطابق الاختيارات فوق بالظبط)' : 'الإجابة الصحيحة (لازم تطابق أحد الاختيارات فوق بالظبط)'}</label>
+        <textarea class="inp" id="q-correct" rows="${type === 'multi' ? 2 : 1}"></textarea>
+      </div>`;
+  } else if (type === 'truefalse') {
+    wrap.innerHTML = `
+      <div class="form-group">
+        <label>الإجابة الصحيحة</label>
+        <select class="inp" id="q-correct-tf" style="max-width:200px;">
+          <option value="true">صح</option>
+          <option value="false">غلط</option>
+        </select>
+      </div>`;
+  } else if (type === 'fillblank') {
+    wrap.innerHTML = `
+      <div class="form-group">
+        <label>الإجابة الصحيحة</label>
+        <input type="text" class="inp" id="q-correct-fill">
+      </div>`;
+  } else {
+    wrap.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">السؤال المقالي بيتصحح يدوي — مفيش إجابة نموذجية تتحط هنا.</p>';
+  }
+}
+
+async function addQuestion() {
+  if (!currentManageExamId) return;
+  const type = document.getElementById('q-type')?.value;
+  const text = document.getElementById('q-text')?.value.trim();
+  const points = parseFloat(document.getElementById('q-points')?.value) || 1;
+  if (!text) { toast('❌ اكتب نص السؤال'); return; }
+
+  let options, correctAnswer;
+  if (type === 'mcq' || type === 'multi') {
+    options = (document.getElementById('q-options')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+    const correctRaw = (document.getElementById('q-correct')?.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+    if (options.length < 2) { toast('❌ اكتب اختيارين على الأقل'); return; }
+    if (!correctRaw.length) { toast('❌ حدد الإجابة الصحيحة'); return; }
+    correctAnswer = type === 'multi' ? correctRaw : correctRaw[0];
+  } else if (type === 'truefalse') {
+    correctAnswer = document.getElementById('q-correct-tf')?.value === 'true';
+  } else if (type === 'fillblank') {
+    correctAnswer = document.getElementById('q-correct-fill')?.value.trim();
+    if (!correctAnswer) { toast('❌ اكتب الإجابة الصحيحة'); return; }
+  }
+
+  try {
+    const res = await api('/questions', {
+      method: 'POST',
+      body: JSON.stringify({ examId: currentManageExamId, type, text, options, correctAnswer, points })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة السؤال');
+      document.getElementById('q-text').value = '';
+      renderQuestionFields();
+      loadQuestions();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة السؤال'));
+    }
+  } catch (e) {}
+}
+
+async function deleteQuestion(id) {
+  if (!confirm('متأكد إنك عايز تحذف السؤال ده؟')) return;
+  try {
+    const res = await api('/questions/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف السؤال'); loadQuestions(); }
   } catch (e) {}
 }
 
