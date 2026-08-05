@@ -17,7 +17,7 @@ function setToken(t) { localStorage.setItem('mfx_admin_token', t); }
 function logout() { localStorage.removeItem('mfx_admin_token'); location.href = 'login.html'; }
 
 async function api(path, opts = {}) {
-  const url = API + path;
+  const url = API_BASE + path;
   const headers = { 'Content-Type': 'application/json' };
   const token = getToken();
   if (token) headers['Authorization'] = 'Bearer ' + token;
