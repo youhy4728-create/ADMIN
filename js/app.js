@@ -1,3 +1,4 @@
+// ===== MFX Admin App =====
 const API = 'https://mrmomd-production.up.railway.app/api';
 
 function toast(msg) {
@@ -517,27 +518,30 @@ async function sendAdminChatMessage() {
 let currentManageExamId = null;
 
 async function loadExamsPage() {
-  // Course dropdown for exam management
-  try {
-    const unitsRes = await api('/units');
-    const units = unitsRes && unitsRes.data ? unitsRes.data : [];
+  // Course dropdown + exam dropdown are independent reads — fire them
+  // together instead of waiting on one before starting the other.
+  const [unitsRes, examsRes] = await Promise.allSettled([
+    api('/units'),
+    api('/exams/admin/all')
+  ]);
+
+  if (unitsRes.status === 'fulfilled') {
+    const units = (unitsRes.value && unitsRes.value.data) || [];
     const courseSelect = document.getElementById('manage-course-select');
     if (courseSelect) {
       courseSelect.innerHTML = '<option value="">اختر الكورس</option>' +
         units.map(u => `<option value="${u.id}">${u.title}</option>`).join('');
     }
-  } catch (e) {}
+  }
 
-  // Exam dropdown for the results filter (admin-only listing)
-  try {
-    const examsRes = await api('/exams/admin/all');
-    const exams = examsRes && examsRes.data ? examsRes.data : [];
+  if (examsRes.status === 'fulfilled') {
+    const exams = (examsRes.value && examsRes.value.data) || [];
     const select = document.getElementById('exam-select');
     if (select) {
       select.innerHTML = '<option value="">جميع الامتحانات</option>' +
         exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
     }
-  } catch (e) {}
+  }
 
   loadExamResults();
 }
