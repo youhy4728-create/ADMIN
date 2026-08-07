@@ -16,6 +16,19 @@ function getToken() { return localStorage.getItem('mfx_admin_token'); }
 function setToken(t) { localStorage.setItem('mfx_admin_token', t); }
 function logout() { localStorage.removeItem('mfx_admin_token'); location.href = 'login.html'; }
 
+// Reads the JWT's own expiry (exp claim) without a network call, so an
+// expired session is caught the instant the page loads instead of only
+// after some data request fails with 401.
+function isTokenExpired(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!payload.exp) return false;
+    return Date.now() >= payload.exp * 1000;
+  } catch (e) {
+    return true; // unreadable token = treat as expired
+  }
+}
+
 async function api(path, opts = {}) {
   const url = API + path;
   const headers = { 'Content-Type': 'application/json' };
@@ -29,8 +42,11 @@ async function api(path, opts = {}) {
 }
 
 function requireAuth() {
-  if (!getToken() && !location.pathname.includes('login.html')) {
-    location.href = 'login.html';
+  const onLoginPage = location.pathname.includes('login.html');
+  const token = getToken();
+  if (onLoginPage) return;
+  if (!token || isTokenExpired(token)) {
+    logout();
   }
 }
 
@@ -76,7 +92,7 @@ async function loadAdminDashboard() {
           <div style="display:flex; align-items:center; gap:12px;">
             <span style="font-size:1.2rem;">${a.icon || '•'}</span>
             <div>
-              <div style="font-weight:600; font-size:0.9rem;">${a.text}</div>
+              <div style="font-weight:600; font-size:0.9rem;">${escapeHtmlAdmin(a.text)}</div>
               <div style="color:var(--text-muted); font-size:0.8rem;">${a.time || ''}</div>
             </div>
           </div>
@@ -96,8 +112,8 @@ async function loadAdminDashboard() {
         div.innerHTML = `
           <div class="leaderboard-rank ${rankClass}">${i + 1}</div>
           <div style="flex:1;">
-            <div style="font-weight:600;">${s.name}</div>
-            <div style="color:var(--text-muted); font-size:0.85rem;">${s.course || ''}</div>
+            <div style="font-weight:600;">${escapeHtmlAdmin(s.name)}</div>
+            <div style="color:var(--text-muted); font-size:0.85rem;">${escapeHtmlAdmin(s.course || '')}</div>
           </div>
           <div style="font-weight:700; color:var(--accent-light);">${s.avgScore}%</div>
         `;
@@ -215,7 +231,7 @@ async function loadCodesList() {
         <td style="font-family:monospace; font-weight:600; color:var(--accent-light);">${c.code}</td>
         <td>${c.unitId ? 'كورس محدد' : 'كل الكورسات'}</td>
         <td><span class="badge ${c.status === 'active' ? 'badge-ok' : 'badge-info'}">${c.status === 'active' ? '✓ مستخدم' : 'متاح'}</span></td>
-        <td>${c.studentName || '—'}</td>
+        <td>${escapeHtmlAdmin(c.studentName || '—')}</td>
         <td>${c.activationDate ? new Date(c.activationDate).toLocaleDateString('ar-EG') : '—'}</td>
         <td><button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="deleteCode('${c.id}')">🗑 حذف</button></td>
       </tr>
@@ -276,9 +292,9 @@ function renderStudentsTable(students) {
   if (emptySearch) emptySearch.style.display = 'none';
   tbody.innerHTML = students.map(s => `
     <tr>
-      <td style="font-weight:600;">${s.name}</td>
-      <td style="font-family:monospace; color:var(--text-muted);">${s.code}</td>
-      <td>${s.courseTitle || '—'}</td>
+      <td style="font-weight:600;">${escapeHtmlAdmin(s.name)}</td>
+      <td style="font-family:monospace; color:var(--text-muted);">${escapeHtmlAdmin(s.code)}</td>
+      <td>${escapeHtmlAdmin(s.courseTitle || '—')}</td>
       <td>
         <div class="prog" style="width:100px;"><div class="prog-fill" style="width:${s.progress || 0}%"></div></div>
         <span style="font-size:0.8rem; color:var(--text-muted);">${s.progress || 0}%</span>
@@ -345,8 +361,8 @@ async function loadStudentDetailPage() {
     commentsBox.innerHTML = (d.comments || []).length
       ? d.comments.map(c => `
           <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
-            <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:4px;">على فيديو: ${c.videoTitle}</div>
-            <div>${c.text}</div>
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:4px;">على فيديو: ${escapeHtmlAdmin(c.videoTitle)}</div>
+            <div>${escapeHtmlAdmin(c.text)}</div>
           </div>
         `).join('')
       : '<p style="color:var(--text-muted);">لسه ماعملش أي تعليق</p>';
@@ -457,8 +473,8 @@ async function loadChatThreads() {
           <div class="dash-nav-item" style="cursor:pointer;" onclick="openChatThread('${t.studentId}')">
             <span>${t.unread > 0 ? '🔴' : '👤'}</span>
             <div style="flex:1; overflow:hidden;">
-              <div style="font-weight:600;">${t.studentName}</div>
-              <div style="color:var(--text-muted); font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${t.lastMessage || ''}</div>
+              <div style="font-weight:600;">${escapeHtmlAdmin(t.studentName)}</div>
+              <div style="color:var(--text-muted); font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtmlAdmin(t.lastMessage || '')}</div>
             </div>
           </div>
         `).join('')
@@ -491,7 +507,7 @@ async function refreshAdminChatMessages() {
           return `
             <div style="align-self:${fromAdmin ? 'flex-start' : 'flex-end'}; max-width:75%;">
               <div style="background:${fromAdmin ? 'var(--accent)' : 'var(--bg)'}; color:${fromAdmin ? '#fff' : 'var(--text)'}; padding:10px 14px; border-radius:var(--radius-md); line-height:1.6;">
-                ${m.text}
+                ${escapeHtmlAdmin(m.text)}
               </div>
             </div>
           `;
@@ -768,8 +784,8 @@ async function loadExamResults() {
         div.innerHTML = `
           <div class="leaderboard-rank ${rankClass}">${i + 1}</div>
           <div style="flex:1;">
-            <div style="font-weight:600;">${s.name}</div>
-            <div style="color:var(--text-muted); font-size:0.85rem;">${s.time || ''}</div>
+            <div style="font-weight:600;">${escapeHtmlAdmin(s.name)}</div>
+            <div style="color:var(--text-muted); font-size:0.85rem;">${escapeHtmlAdmin(s.time || '')}</div>
           </div>
           <div style="font-weight:700; color:var(--accent-light);">${s.score}%</div>
         `;
@@ -786,13 +802,34 @@ async function loadExamResults() {
         tbody.innerHTML = data.results.map((r, i) => `
           <tr>
             <td style="font-weight:700;">#${i + 1}</td>
-            <td style="font-weight:600;">${r.name}</td>
+            <td style="font-weight:600;">${escapeHtmlAdmin(r.name)}</td>
             <td style="color:${r.score >= 50 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">${r.score}%</td>
             <td style="color:var(--text-muted);">${r.time || '—'}</td>
             <td style="color:var(--text-muted); font-size:0.85rem;">${r.date || '—'}</td>
           </tr>
         `).join('');
       }
+    }
+  } catch (e) {}
+}
+
+async function changeAdminPassword() {
+  const currentPassword = document.getElementById('current-password')?.value;
+  const newPassword = document.getElementById('new-password')?.value;
+  const confirmPassword = document.getElementById('confirm-password')?.value;
+  if (!currentPassword || !newPassword) { toast('❌ املا كل الحقول'); return; }
+  if (newPassword.length < 8) { toast('❌ كلمة المرور الجديدة لازم تكون 8 حروف على الأقل'); return; }
+  if (newPassword !== confirmPassword) { toast('❌ كلمة المرور الجديدة مش متطابقة مع التأكيد'); return; }
+  try {
+    const res = await api('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (res && res.ok) {
+      toast('✅ تم تغيير كلمة المرور — سجل دخول تاني بيها');
+      ['current-password', 'new-password', 'confirm-password'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    } else {
+      toast('❌ ' + (res?.error || 'فشل تغيير كلمة المرور'));
     }
   } catch (e) {}
 }
@@ -810,4 +847,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (path.includes('student-detail.html')) loadStudentDetailPage();
   if (path.includes('presentations.html')) loadPresentationsPage();
   if (path.includes('chat.html')) loadChatPage();
+});
+
+// When the browser restores a page from its back/forward cache (e.g. the
+// user hits the back button), it shows the old DOM as-is without re-running
+// any of the code above — including the login check. That's what made an
+// expired/logged-out session look like it was still showing "the old page".
+// Forcing a fresh load re-runs requireAuth() and re-fetches real data.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) location.reload();
 });
