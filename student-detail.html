@@ -6,6 +6,7 @@
   <title>نشاط الطالب | MFX Admin</title>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 </head>
 <body>
   <aside class="dash-sidebar">
@@ -37,7 +38,10 @@
           · آخر دخول: <span id="detail-last-login">—</span>
         </p>
       </div>
-      <a href="#" id="detail-chat-link" class="btn btn-primary">💬 مراسلة الطالب</a>
+      <div style="display:flex; gap:12px; align-items:center;">
+        <canvas id="detail-qr-canvas" style="border-radius:8px;"></canvas>
+        <a href="#" id="detail-chat-link" class="btn btn-primary">💬 مراسلة الطالب</a>
+      </div>
     </div>
 
     <div class="grid-4" style="margin-bottom:32px;">

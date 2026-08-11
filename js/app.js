@@ -1,5 +1,8 @@
 // ===== MFX Admin App =====
 const API = 'https://mrmomd-production.up.railway.app/api';
+// Used to build the QR-code deep link students scan to log in with a
+// pre-filled code. Update this if the student site's domain ever changes.
+const STUDENT_SITE_URL = 'https://student-momdoh.vercel.app';
 
 function toast(msg) {
   let t = document.querySelector('.toast');
@@ -146,6 +149,7 @@ async function loadUnitsList() {
           <h3 style="margin-top:12px;">${escapeHtmlAdmin(u.title)}</h3>
           <p>${escapeHtmlAdmin(u.description || 'بدون وصف')}</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openVideosPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🎥 الفيديوهات</button>
             ${u.status === 'published'
               ? `<button class="btn btn-secondary btn-sm" onclick="hideUnit('${u.id}')">🙈 إخفاء</button>`
               : `<button class="btn btn-primary btn-sm" onclick="publishUnit('${u.id}')">🚀 نشر</button>`}
@@ -211,6 +215,154 @@ function escapeHtmlAdmin(str) {
   return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Units / Courses — videos
+let currentVideosUnitId = null;
+
+function openVideosPanel(unitId, unitTitle) {
+  currentVideosUnitId = unitId;
+  document.getElementById('videos-wrap').style.display = 'block';
+  document.getElementById('videos-unit-title').textContent = unitTitle;
+  setVideoMode('upload');
+  loadVideosForUnit();
+  document.getElementById('videos-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeVideosPanel() {
+  currentVideosUnitId = null;
+  document.getElementById('videos-wrap').style.display = 'none';
+}
+function setVideoMode(mode) {
+  document.getElementById('video-mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('video-mode-link').style.display = mode === 'link' ? 'block' : 'none';
+  document.getElementById('video-mode-upload-btn').className = 'btn btn-sm ' + (mode === 'upload' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('video-mode-link-btn').className = 'btn btn-sm ' + (mode === 'link' ? 'btn-primary' : 'btn-secondary');
+}
+
+async function loadVideosForUnit() {
+  if (!currentVideosUnitId) return;
+  const list = document.getElementById('videos-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/videos/unit/' + currentVideosUnitId);
+    const videos = res && res.data ? res.data : [];
+    if (!videos.length) {
+      list.innerHTML = '<p style="color:var(--text-muted);">مفيش فيديوهات في الكورس ده لسه.</p>';
+      return;
+    }
+    videos.sort((a, b) => (parseFloat(a.order) || 0) - (parseFloat(b.order) || 0));
+    list.innerHTML = videos.map(v => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span>▶️</span>
+          <span>${escapeHtmlAdmin(v.title)}</span>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteVideo('${v.id}')">🗑</button>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+async function uploadVideo() {
+  const title = document.getElementById('video-title')?.value.trim();
+  const fileInput = document.getElementById('video-file');
+  const file = fileInput?.files?.[0];
+  if (!currentVideosUnitId) return;
+  if (!title) { toast('❌ اكتب عنوان الفيديو'); return; }
+  if (!file) { toast('❌ اختار ملف الفيديو'); return; }
+
+  const progressWrap = document.getElementById('video-upload-progress');
+  const fill = document.getElementById('video-upload-fill');
+  const pct = document.getElementById('video-upload-pct');
+  const btn = document.getElementById('video-upload-btn');
+  progressWrap.style.display = 'block';
+  btn.disabled = true;
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('subfolder', 'videos');
+
+    const uploadRes = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API + '/upload');
+      const token = getToken();
+      if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const p = Math.round((e.loaded / e.total) * 100);
+          fill.style.width = p + '%';
+          pct.textContent = p + '%';
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401) { logout(); return; }
+        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
+      };
+      xhr.onerror = () => reject(new Error('network error'));
+      xhr.send(formData);
+    });
+
+    if (!uploadRes || !uploadRes.ok) {
+      toast('❌ ' + (uploadRes?.error || 'فشل رفع الفيديو'));
+      return;
+    }
+
+    const res = await api('/videos', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId: currentVideosUnitId,
+        title,
+        driveFileId: uploadRes.data.driveFileId,
+        driveUrl: uploadRes.data.previewUrl || uploadRes.data.driveUrl
+      })
+    });
+    if (res && res.ok) {
+      toast('✅ تم رفع الفيديو');
+      document.getElementById('video-title').value = '';
+      fileInput.value = '';
+      loadVideosForUnit();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل حفظ الفيديو'));
+    }
+  } catch (e) {
+    toast('❌ فشل رفع الفيديو');
+  } finally {
+    progressWrap.style.display = 'none';
+    fill.style.width = '0%';
+    pct.textContent = '0%';
+    btn.disabled = false;
+  }
+}
+
+async function addVideoByLink() {
+  const title = document.getElementById('video-title')?.value.trim();
+  const link = document.getElementById('video-link')?.value.trim();
+  if (!currentVideosUnitId) return;
+  if (!title) { toast('❌ اكتب عنوان الفيديو'); return; }
+  if (!link) { toast('❌ الصق رابط الفيديو'); return; }
+  try {
+    const res = await api('/videos', {
+      method: 'POST',
+      body: JSON.stringify({ unitId: currentVideosUnitId, title, driveUrl: link })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الفيديو');
+      document.getElementById('video-title').value = '';
+      document.getElementById('video-link').value = '';
+      loadVideosForUnit();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الفيديو'));
+    }
+  } catch (e) {}
+}
+
+async function deleteVideo(id) {
+  if (!confirm('متأكد إنك عايز تحذف الفيديو ده؟')) return;
+  try {
+    const res = await api('/videos/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف الفيديو'); loadVideosForUnit(); }
+  } catch (e) {}
+}
+
 // Codes
 async function loadCodesPage() {
   loadCodesList();
@@ -233,7 +385,7 @@ async function loadCodesList() {
         <td><span class="badge ${c.status === 'active' ? 'badge-ok' : 'badge-info'}">${c.status === 'active' ? '✓ مستخدم' : 'متاح'}</span></td>
         <td>${escapeHtmlAdmin(c.studentName || '—')}</td>
         <td>${c.activationDate ? new Date(c.activationDate).toLocaleDateString('ar-EG') : '—'}</td>
-        <td><button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="deleteCode('${c.id}')">🗑 حذف</button></td>
+        <td><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="showQrCode('${c.code}')">📱 QR</button> <button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="deleteCode('${c.id}')">🗑 حذف</button></td>
       </tr>
     `).join('');
   } catch (e) {}
@@ -268,6 +420,21 @@ async function deleteCode(id) {
       toast('❌ ' + (res?.error || 'فشل حذف الكود'));
     }
   } catch (e) {}
+}
+
+function showQrCode(code) {
+  const modal = document.getElementById('qr-modal');
+  const canvas = document.getElementById('qr-canvas');
+  const label = document.getElementById('qr-modal-code');
+  if (!modal || !canvas || typeof QRCode === 'undefined') { toast('❌ مكتبة QR مش متاحة'); return; }
+  label.textContent = code;
+  const link = STUDENT_SITE_URL + '/login.html?code=' + encodeURIComponent(code);
+  QRCode.toCanvas(canvas, link, { width: 220, margin: 2 }, (err) => { if (err) toast('❌ فشل توليد QR'); });
+  modal.style.display = 'flex';
+}
+function closeQrModal() {
+  const modal = document.getElementById('qr-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 // Students
@@ -329,6 +496,11 @@ async function loadStudentDetailPage() {
 
     document.getElementById('detail-name').textContent = d.student.name || '—';
     document.getElementById('detail-code').textContent = d.student.code || '—';
+    if (d.student.code && typeof QRCode !== 'undefined') {
+      const canvas = document.getElementById('detail-qr-canvas');
+      const link = STUDENT_SITE_URL + '/login.html?code=' + encodeURIComponent(d.student.code);
+      QRCode.toCanvas(canvas, link, { width: 90, margin: 1 }, () => {});
+    }
     document.getElementById('detail-last-login').textContent = d.student.lastLoginAt ? new Date(d.student.lastLoginAt).toLocaleString('ar-EG') : '—';
     document.getElementById('detail-chat-link').href = 'chat.html?studentId=' + id;
 
@@ -394,6 +566,7 @@ async function uploadPresentation() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('subfolder', 'presentations');
+    formData.append('restrictDownload', 'true');
     const token = getToken();
     const uploadRes = await fetch(API + '/upload', {
       method: 'POST',
@@ -408,7 +581,7 @@ async function uploadPresentation() {
       body: JSON.stringify({
         unitId, title,
         driveFileId: uploadData.data.driveFileId,
-        driveUrl: uploadData.data.driveUrl
+        driveUrl: uploadData.data.previewUrl || uploadData.data.driveUrl
       })
     });
     if (created.ok) {
