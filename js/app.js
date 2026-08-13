@@ -19,6 +19,38 @@ function getToken() { return localStorage.getItem('mfx_admin_token'); }
 function setToken(t) { localStorage.setItem('mfx_admin_token', t); }
 function logout() { localStorage.removeItem('mfx_admin_token'); location.href = 'login.html'; }
 
+// Promise Deduplication / Request Lock for actions triggered from inline
+// onclick handlers that don't have a button element handy (unlike the
+// withButtonLock forms above) — e.g. "Publish Results", "Delete Exam".
+// A second click on the same key while the first is still in flight is
+// simply ignored instead of firing a second request.
+const inFlightKeys = new Set();
+async function withRequestLock(key, fn) {
+  if (inFlightKeys.has(key)) return null;
+  inFlightKeys.add(key);
+  try { return await fn(); } finally { inFlightKeys.delete(key); }
+}
+
+// Same anti-duplicate-click + visible spinner pattern used on the student
+// site: disable the button, swap its text for a spinning circle, and
+// ignore any extra clicks until the request actually settles.
+async function withButtonLock(btn, busyText, fn) {
+  if (!btn || btn.dataset.locked === '1') return;
+  const original = btn.innerHTML;
+  btn.dataset.locked = '1';
+  btn.disabled = true;
+  btn.classList.add('is-loading');
+  if (busyText) btn.innerHTML = busyText + '<span class="mfx-spinner"></span>';
+  try {
+    return await fn();
+  } finally {
+    btn.dataset.locked = '0';
+    btn.disabled = false;
+    btn.classList.remove('is-loading');
+    btn.innerHTML = original;
+  }
+}
+
 // Reads the JWT's own expiry (exp claim) without a network call, so an
 // expired session is caught the instant the page loads instead of only
 // after some data request fails with 401.
@@ -56,23 +88,32 @@ function requireAuth() {
 // Admin Login
 async function handleAdminLogin(e) {
   e.preventDefault();
+  const form = document.getElementById('admin-login-form');
+  const btn = document.getElementById('admin-login-submit-btn');
   const username = document.getElementById('admin-user')?.value.trim();
   const password = document.getElementById('admin-pass')?.value.trim();
   if (!username || !password) { toast('❌ أدخل جميع البيانات'); return; }
-  toast('⏳ جاري التحقق...');
-  try {
-    const data = await api('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password })
-    });
-    if (data.token) {
-      setToken(data.token);
-      toast('✅ تم تسجيل الدخول');
-      setTimeout(() => location.href = 'index.html', 800);
-    } else {
-      toast('❌ ' + (data.error || 'بيانات غير صحيحة'));
+
+  await withButtonLock(btn, 'جاري التحقق...', async () => {
+    if (form) form.querySelectorAll('input').forEach((i) => i.disabled = true);
+    try {
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      });
+      if (data && data.token) {
+        setToken(data.token);
+        toast('✅ تم تسجيل الدخول');
+        // Navigate the instant we're actually logged in — no artificial delay.
+        location.href = 'index.html';
+      } else {
+        toast('❌ ' + ((data && data.error) || 'بيانات غير صحيحة'));
+        if (form) form.querySelectorAll('input').forEach((i) => i.disabled = false);
+      }
+    } catch (e) {
+      if (form) form.querySelectorAll('input').forEach((i) => i.disabled = false);
     }
-  } catch (e) {}
+  });
 }
 
 // Dashboard
@@ -809,22 +850,30 @@ async function saveExam() {
 }
 
 async function publishExam(id) {
-  try { const res = await api('/exams/' + id + '/publish', { method: 'POST' }); if (res?.ok) { toast('✅ الامتحان بقى منشور'); loadUnitExams(); } } catch (e) {}
+  await withRequestLock('publish-exam:' + id, async () => {
+    try { const res = await api('/exams/' + id + '/publish', { method: 'POST' }); if (res?.ok) { toast('✅ الامتحان بقى منشور'); loadUnitExams(); } } catch (e) {}
+  });
 }
 async function hideExam(id) {
-  try { const res = await api('/exams/' + id + '/hide', { method: 'POST' }); if (res?.ok) { toast('✅ تم إخفاء الامتحان'); loadUnitExams(); } } catch (e) {}
+  await withRequestLock('hide-exam:' + id, async () => {
+    try { const res = await api('/exams/' + id + '/hide', { method: 'POST' }); if (res?.ok) { toast('✅ تم إخفاء الامتحان'); loadUnitExams(); } } catch (e) {}
+  });
 }
 async function publishExamResults(id) {
   if (!confirm('هيتم حساب الترتيب واعتماد النتائج، وهتظهر للطلاب فورًا. متأكد؟')) return;
-  try {
-    const res = await api('/attempts/exam/' + id + '/publish-results', { method: 'POST' });
-    if (res?.ok) { toast('✅ اتعمد النتائج وبقت ظاهرة للطلاب'); loadUnitExams(); loadExamResults(); }
-    else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
-  } catch (e) {}
+  await withRequestLock('publish-results:' + id, async () => {
+    try {
+      const res = await api('/attempts/exam/' + id + '/publish-results', { method: 'POST' });
+      if (res?.ok) { toast('✅ اتعمد النتائج وبقت ظاهرة للطلاب'); loadUnitExams(); loadExamResults(); }
+      else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
+    } catch (e) {}
+  });
 }
 async function deleteExam(id) {
   if (!confirm('حذف الامتحان هيمسح كل أسئلته كمان. متأكد؟')) return;
-  try { const res = await api('/exams/' + id, { method: 'DELETE' }); if (res?.ok) { toast('✅ تم حذف الامتحان'); loadUnitExams(); } } catch (e) {}
+  await withRequestLock('delete-exam:' + id, async () => {
+    try { const res = await api('/exams/' + id, { method: 'DELETE' }); if (res?.ok) { toast('✅ تم حذف الامتحان'); loadUnitExams(); } } catch (e) {}
+  });
 }
 
 // ----- Questions -----
@@ -1094,18 +1143,41 @@ async function changeAdminPassword() {
 }
 
 // Init
+// Full-page loader — same pattern as the student site's app.js.
+function showPageLoader() {
+  if (document.querySelector('.mfx-page-loader')) return;
+  const el = document.createElement('div');
+  el.className = 'mfx-page-loader';
+  el.innerHTML = '<div class="mfx-page-loader-ring"></div>';
+  document.body.appendChild(el);
+}
+function hidePageLoader() {
+  const el = document.querySelector('.mfx-page-loader');
+  if (!el) return;
+  el.classList.add('is-hiding');
+  setTimeout(() => el.remove(), 200);
+}
+async function withPageLoader(fn) {
+  showPageLoader();
+  try {
+    return await fn();
+  } finally {
+    hidePageLoader();
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   requireAuth();
   const path = location.pathname;
   if (path.includes('login.html')) return;
-  if (path.includes('index.html')) loadAdminDashboard();
-  if (path.includes('units.html')) loadUnitsPage();
-  if (path.includes('codes.html')) loadCodesPage();
-  if (path.includes('students.html')) loadStudentsPage();
-  if (path.includes('exams.html')) loadExamsPage();
-  if (path.includes('student-detail.html')) loadStudentDetailPage();
-  if (path.includes('presentations.html')) loadPresentationsPage();
-  if (path.includes('chat.html')) loadChatPage();
+  if (path.includes('index.html')) withPageLoader(loadAdminDashboard);
+  if (path.includes('units.html')) withPageLoader(loadUnitsPage);
+  if (path.includes('codes.html')) withPageLoader(loadCodesPage);
+  if (path.includes('students.html')) withPageLoader(loadStudentsPage);
+  if (path.includes('exams.html')) withPageLoader(loadExamsPage);
+  if (path.includes('student-detail.html')) withPageLoader(loadStudentDetailPage);
+  if (path.includes('presentations.html')) withPageLoader(loadPresentationsPage);
+  if (path.includes('chat.html')) withPageLoader(loadChatPage);
 });
 
 // When the browser restores a page from its back/forward cache (e.g. the

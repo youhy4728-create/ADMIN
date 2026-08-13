@@ -682,3 +682,41 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   .dash-sidebar { display: none; }
   .dash-main { margin-right: 0; padding: 80px 16px 16px; }
 }
+
+/* ===== Global loading spinner (lightweight, no heavy animation) ===== */
+.mfx-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: mfx-spin 0.6s linear infinite;
+  vertical-align: -3px;
+  margin-left: 8px;
+}
+@keyframes mfx-spin { to { transform: rotate(360deg); } }
+
+.btn[disabled], .btn.is-loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Full-page loading overlay shown while a page's initial data is being
+   fetched, so the teacher sees a spinner instead of a blank page. */
+.mfx-page-loader {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  transition: opacity 0.2s ease;
+}
+.mfx-page-loader.is-hiding { opacity: 0; pointer-events: none; }
+.mfx-page-loader-ring {
+  width: 44px; height: 44px;
+  border: 3px solid rgba(255,255,255,0.15);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: mfx-spin 0.7s linear infinite;
+}
+
