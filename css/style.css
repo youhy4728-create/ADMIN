@@ -682,3 +682,45 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   .dash-sidebar { display: none; }
   .dash-main { margin-right: 0; padding: 80px 16px 16px; }
 }
+
+/* ===== Global loading spinner (lightweight, no heavy animation) ===== */
+.mfx-spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.25);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: mfx-spin 0.6s linear infinite;
+  vertical-align: -3px;
+  margin-left: 8px;
+}
+@keyframes mfx-spin { to { transform: rotate(360deg); } }
+
+.btn[disabled], .btn.is-loading {
+  opacity: 0.7;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Full-card "pending results" state after submit but before the teacher
+   publishes results — no score, no ranking, just a calm confirmation. */
+.results-pending {
+  text-align: center;
+}
+.results-pending .icon { font-size: 3rem; margin-bottom: 12px; }
+
+/* Listening question audio player — rendered once and never re-created on
+   answer selection, so it never restarts playback. */
+.q-audio {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+/* Small inline autosave indicator */
+.autosave-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 8px;
+  min-height: 1em;
+}
