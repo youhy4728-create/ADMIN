@@ -1,5 +1,8 @@
-// ===== MFX Student App =====
+// ===== MFX Admin App =====
 const API = 'https://mrmomd-production.up.railway.app/api';
+// Used to build the QR-code deep link students scan to log in with a
+// pre-filled code. Update this if the student site's domain ever changes.
+const STUDENT_SITE_URL = 'https://student-momdoh.vercel.app';
 
 function toast(msg) {
   let t = document.querySelector('.toast');
@@ -12,33 +15,9 @@ function toast(msg) {
   setTimeout(() => { t.classList.remove('on'); setTimeout(() => t.remove(), 400); }, 3000);
 }
 
-// ===== Global loading / anti-duplicate-click helpers =====
-// Every important action (login, start exam, save, submit) routes through
-// withButtonLock so a double-click / double-tap can only ever fire ONE
-// request: the button is disabled + shows a spinner immediately, and any
-// extra clicks while it's busy are ignored until the request settles.
-const activeLocks = new Set();
-async function withButtonLock(btn, busyText, fn) {
-  if (!btn || btn.dataset.locked === '1') return; // already running — ignore the extra click
-  const original = btn.innerHTML;
-  btn.dataset.locked = '1';
-  btn.disabled = true;
-  btn.classList.add('is-loading');
-  if (busyText) btn.innerHTML = busyText + '<span class="mfx-spinner"></span>';
-  try {
-    return await fn();
-  } finally {
-    btn.dataset.locked = '0';
-    btn.disabled = false;
-    btn.classList.remove('is-loading');
-    btn.innerHTML = original;
-  }
-}
-
-function getToken() { return localStorage.getItem('mfx_student_token'); }
-function setToken(t) { localStorage.setItem('mfx_student_token', t); }
-function getUser() { try { return JSON.parse(localStorage.getItem('mfx_student_user') || '{}'); } catch(e) { return {}; } }
-function logout() { localStorage.removeItem('mfx_student_token'); localStorage.removeItem('mfx_student_user'); location.href = 'login.html'; }
+function getToken() { return localStorage.getItem('mfx_admin_token'); }
+function setToken(t) { localStorage.setItem('mfx_admin_token', t); }
+function logout() { localStorage.removeItem('mfx_admin_token'); location.href = 'login.html'; }
 
 // Reads the JWT's own expiry (exp claim) without a network call, so an
 // expired session is caught the instant the page loads instead of only
@@ -65,7 +44,6 @@ async function api(path, opts = {}) {
   } catch (e) { toast('❌ خطأ في الاتصال'); throw e; }
 }
 
-// Auth check
 function requireAuth() {
   const onLoginPage = location.pathname.includes('login.html');
   const token = getToken();
@@ -75,952 +53,1066 @@ function requireAuth() {
   }
 }
 
-// Login
-async function handleLogin(e) {
+// Admin Login
+async function handleAdminLogin(e) {
   e.preventDefault();
-  const form = document.getElementById('login-form');
-  const btn = document.getElementById('login-submit-btn');
-  const code = document.getElementById('login-code')?.value.trim();
-  const name = document.getElementById('login-name')?.value.trim();
-  const phone = document.getElementById('login-phone')?.value.trim();
-  const guardianPhone = document.getElementById('login-guardian-phone')?.value.trim();
-  if (!code || !name || !phone || !guardianPhone) { toast('❌ أدخل الكود والاسم ورقم تليفونك ورقم تليفون ولي الأمر'); return; }
-
-  await withButtonLock(btn, 'جاري تسجيل الدخول...', async () => {
-    if (form) form.querySelectorAll('input').forEach((i) => i.disabled = true);
-    try {
-      const data = await api('/auth/student-login', {
-        method: 'POST',
-        body: JSON.stringify({ code, name, phone, guardianPhone })
-      });
-      if (data && data.token) {
-        setToken(data.token);
-        localStorage.setItem('mfx_student_user', JSON.stringify(data.user));
-        toast('✅ تم تسجيل الدخول');
-        location.href = 'index.html'; // single navigation — no repeated reloads
-      } else {
-        toast('❌ ' + ((data && data.error) || 'كود أو اسم غير صحيح'));
-        if (form) form.querySelectorAll('input').forEach((i) => i.disabled = false);
-      }
-    } catch (err) {
-      if (form) form.querySelectorAll('input').forEach((i) => i.disabled = false);
-    }
-  });
-}
-
-// Load my courses
-async function loadMyCourses() {
-  const grid = document.getElementById('my-courses');
-  const empty = document.getElementById('courses-empty');
-  if (!grid) return;
+  const username = document.getElementById('admin-user')?.value.trim();
+  const password = document.getElementById('admin-pass')?.value.trim();
+  if (!username || !password) { toast('❌ أدخل جميع البيانات'); return; }
+  toast('⏳ جاري التحقق...');
   try {
-    const data = await api('/students/my-courses');
-    grid.innerHTML = '';
-    if (!data.courses || !data.courses.length) {
-      if (empty) empty.style.display = 'block';
-      return;
-    }
-    if (empty) empty.style.display = 'none';
-    data.courses.forEach(c => {
-      const div = document.createElement('div');
-      div.className = 'card';
-      div.innerHTML = `
-        <div class="card-img">${c.icon || '📚'}</div>
-        <div class="card-body">
-          <span class="card-tag">${c.tag || 'كورس'}</span>
-          <h3>${escapeHtml(c.title)}</h3>
-          <p>${escapeHtml(c.description || '')}</p>
-          <div style="margin:12px 0;">
-            <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:0.85rem;">
-              <span style="color:var(--text-secondary);">التقدم</span>
-              <span style="color:var(--accent-light); font-weight:600;">${c.progress || 0}%</span>
-            </div>
-            <div class="prog"><div class="prog-fill" style="width:${c.progress || 0}%"></div></div>
-          </div>
-          <a href="course.html?id=${c.id}" class="btn btn-primary" style="width:100%;">متابعة الكورس</a>
-        </div>
-      `;
-      grid.appendChild(div);
-    });
-  } catch (e) { grid.innerHTML = ''; if (empty) empty.style.display = 'block'; }
-}
-
-// Load course detail
-async function loadCourse() {
-  const params = new URLSearchParams(location.search);
-  const id = params.get('id');
-  if (!id) { toast('❌ كورس غير موجود'); return; }
-  try {
-    // These two are independent — fire them together, and reuse the
-    // course-detail response for the units accordion instead of the old
-    // code's second (redundant) call to the same endpoint.
-    const [c] = await Promise.all([
-      api('/units?courseId=' + id),
-      loadCourseExams(id)
-    ]);
-    document.getElementById('course-title').textContent = c.title || 'كورس';
-    document.getElementById('course-desc').textContent = c.description || '';
-    document.getElementById('course-meta').innerHTML = `
-      <span>📚 ${c.units || 0} وحدة</span>
-      <span>🎥 ${c.videos || 0} فيديو</span>
-      <span>📝 ${c.exams || 0} امتحان</span>
-    `;
-    document.getElementById('course-badges').innerHTML = `
-      ${c.popular ? '<span class="badge badge-warn">🔥 شائع</span>' : ''}
-      <span class="badge badge-ok">✓ مسجل</span>
-    `;
-    renderUnits(c.units || []);
-  } catch (e) { toast('❌ فشل تحميل الكورس'); }
-}
-
-function renderUnits(units) {
-  const list = document.getElementById('units-list');
-  const empty = document.getElementById('units-empty');
-  if (!list) return;
-  list.innerHTML = '';
-  if (!units.length) { if (empty) empty.style.display = 'block'; return; }
-  if (empty) empty.style.display = 'none';
-  units.forEach((u, i) => {
-    const item = document.createElement('div');
-    item.className = 'accordion-item' + (i === 0 ? ' open' : '');
-    item.innerHTML = `
-      <div class="accordion-header" onclick="toggleAcc(this)">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <span style="color:var(--accent);">📁</span>
-          <h4>${escapeHtml(u.title)}</h4>
-        </div>
-        <div class="meta">
-          <span>${u.videoCount || 0} فيديو</span>
-          <span>${u.examCount || 0} امتحان</span>
-          <span style="transform:${i===0?'rotate(180deg)':'rotate(0deg)'};">▼</span>
-        </div>
-      </div>
-      <div class="accordion-content">
-        <div style="display:flex; flex-direction:column; gap:8px;">
-          ${(u.videos || []).map(v => `
-            <a href="video.html?id=${v.id}" style="display:flex; align-items:center; justify-content:space-between; padding:12px; background:var(--bg); border-radius:var(--radius-md); text-decoration:none; color:inherit;">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span>▶️</span>
-                <span>${escapeHtml(v.title)}</span>
-                ${v.watched ? '<span class="badge badge-ok">✓ شُاهد</span>' : ''}
-              </div>
-              <span style="color:var(--text-muted); font-size:0.85rem;">${v.duration || ''}</span>
-            </a>
-          `).join('')}
-          ${(u.presentations || []).map(p => `
-            <a href="presentation.html?id=${p.id}" style="display:flex; align-items:center; justify-content:space-between; padding:12px; background:var(--bg); border-radius:var(--radius-md); text-decoration:none; color:inherit;">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span>📊</span>
-                <span>${escapeHtml(p.title)}</span>
-              </div>
-              <span style="color:var(--text-muted); font-size:0.85rem;">${p.slideCount ? p.slideCount + ' شريحة' : 'بوربوينت'}</span>
-            </a>
-          `).join('')}
-          ${(u.exams || []).map(ex => `
-            <div style="display:flex; align-items:center; justify-content:space-between; padding:12px; background:var(--bg); border-radius:var(--radius-md);">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <span>📝</span>
-                <span>${escapeHtml(ex.title)}</span>
-              </div>
-              <a href="exam.html?id=${ex.id}" class="btn btn-primary btn-sm">بدء</a>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `;
-    list.appendChild(item);
-  });
-}
-
-async function loadCourseExams(courseId) {
-  const list = document.getElementById('exams-list');
-  const empty = document.getElementById('exams-empty');
-  if (!list) return;
-  try {
-    const data = await api('/exams?courseId=' + courseId);
-    list.innerHTML = '';
-    const exams = data.exams || [];
-    if (!exams.length) { if (empty) empty.style.display = 'block'; return; }
-    if (empty) empty.style.display = 'none';
-    exams.forEach(ex => {
-      const div = document.createElement('div');
-      div.style.cssText = 'background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:24px;';
-      div.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
-          <div>
-            <h3 style="margin-bottom:6px;">${escapeHtml(ex.title)}</h3>
-            <p style="color:var(--text-secondary); font-size:0.9rem;">${ex.questionCount || 0} سؤال | ${ex.duration || 0} دقيقة</p>
-          </div>
-          ${ex.completed ? '<span class="badge badge-ok">✓ تم</span>' : '<span class="badge badge-info">جديد</span>'}
-        </div>
-        <div style="display:flex; gap:12px; flex-wrap:wrap;">
-          <a href="exam.html?id=${ex.id}" class="btn btn-primary">${ex.completed ? 'إعادة المحاولة' : 'بدء الامتحان'}</a>
-          ${ex.score != null ? `<span style="color:var(--accent-light); font-weight:700; align-self:center;">النتيجة: ${ex.score}%</span>` : ''}
-        </div>
-      `;
-      list.appendChild(div);
-    });
-  } catch (e) { list.innerHTML = ''; if (empty) empty.style.display = 'block'; }
-}
-
-// Exam
-// examState.attemptId / expiresAt come from the server (POST /attempts/start)
-// — the server's clock is the only source of truth for when time is up.
-// examState.answers is mirrored into localStorage on every change so a
-// refresh (or the browser dying) never loses an answer that hasn't made it
-// to the server yet.
-let examState = { examId: null, attemptId: null, questions: [], current: 0, answers: {}, expiresAt: null };
-let dirtyAnswerKeys = new Set(); // which question IDs changed since the last autosave
-
-function answersStorageKey_() { return 'mfx_exam_answers_' + examState.attemptId; }
-function saveAnswersLocally_() {
-  if (!examState.attemptId) return;
-  try { localStorage.setItem(answersStorageKey_(), JSON.stringify(examState.answers)); } catch (e) {}
-}
-function loadAnswersLocally_() {
-  try {
-    const raw = localStorage.getItem(answersStorageKey_());
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) { return {}; }
-}
-function clearAnswersLocally_() {
-  try { localStorage.removeItem(answersStorageKey_()); } catch (e) {}
-}
-
-async function loadExam() {
-  const params = new URLSearchParams(location.search);
-  const id = params.get('id');
-  if (!id) { toast('❌ امتحان غير موجود'); return; }
-  examState.examId = id;
-  setExamLoading_(true, 'جاري بدء الامتحان...');
-  try {
-    // Start (or resume) the attempt FIRST — this is what gives us a
-    // server-issued attemptId + expiresAt to anchor everything else to.
-    // One request, deduped server-side, so a double-tap or a page reload
-    // never creates a second attempt.
-    const startRes = await api('/attempts/start', { method: 'POST', body: JSON.stringify({ examId: id }) });
-    if (!startRes || !startRes.ok) {
-      const container = document.getElementById('questions-container');
-      if (container) container.innerHTML = `<div style="text-align:center; padding:40px 0; color:var(--text-secondary);">❌ ${escapeHtml((startRes && startRes.error) || 'تعذر بدء الامتحان')}</div>`;
-      toast('❌ ' + ((startRes && startRes.error) || 'تعذر بدء الامتحان'));
-      return;
-    }
-    const attempt = startRes.data;
-    examState.attemptId = attempt.id;
-    examState.expiresAt = attempt.expiresAt ? new Date(attempt.expiresAt).getTime() : null;
-
-    setExamLoading_(true, 'جاري تحميل الأسئلة...');
-    const res = await api('/exams/' + id);
-    const data = (res && res.data) || {};
-    examState.questions = data.questions || [];
-
-    // Resume any answers already saved on the server for this attempt,
-    // then let localStorage fill in anything saved locally that a slow
-    // network hadn't autosaved yet (local always wins — it's newer).
-    const serverAnswers = safeParseAnswers_(attempt.answers);
-    const localAnswers = loadAnswersLocally_();
-    examState.answers = { ...serverAnswers, ...localAnswers };
-
-    document.getElementById('exam-badge').textContent = data.title || 'امتحان';
-    document.getElementById('exam-title').textContent = data.description || '';
-    const minutes = parseInt(data.timerMinutes, 10) || 0;
-    document.getElementById('exam-meta').textContent = `${examState.questions.length} سؤال` + (minutes ? ` | ${minutes} دقيقة` : '');
-    setExamLoading_(false);
-    renderExam();
-    if (examState.expiresAt) startTimer();
-    else { const t = document.getElementById('timer'); if (t) t.textContent = '∞'; }
-    startAutosaveLoop();
-  } catch (e) {
-    setExamLoading_(false);
-    toast('❌ فشل تحميل الامتحان');
-  }
-}
-
-function safeParseAnswers_(raw) {
-  if (!raw) return {};
-  try { const v = JSON.parse(raw); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; }
-}
-
-function setExamLoading_(isLoading, text) {
-  const container = document.getElementById('questions-container');
-  if (!container) return;
-  if (isLoading) {
-    container.innerHTML = `<div style="text-align:center; padding:60px 0; color:var(--text-secondary);">
-      <span class="mfx-spinner" style="width:28px; height:28px;"></span>
-      <p style="margin-top:12px;">${escapeHtml(text || 'جاري التحميل...')}</p>
-    </div>`;
-  }
-}
-
-function renderExam() {
-  const container = document.getElementById('questions-container');
-  const empty = document.getElementById('exam-empty');
-  if (!examState.questions.length) { container.innerHTML = ''; if (empty) empty.style.display = 'block'; return; }
-  if (empty) empty.style.display = 'none';
-  container.innerHTML = examState.questions.map((q, i) => `
-    <div class="q-card" data-idx="${i}" data-qid="${q.id}" style="display:${i===0?'block':'none'}">
-      <span class="q-num">السؤال ${i+1}</span>
-      <p class="q-text">${escapeHtml(q.text)}</p>
-      ${q.type === 'listening' && q.audioUrl ? `<audio class="q-audio" controls preload="none" src="${escapeAttr_(q.audioUrl)}">متصفحك لا يدعم الصوت</audio>` : ''}
-      <div class="opts" data-qid="${q.id}">${renderQuestionInput(q)}</div>
-    </div>
-  `).join('');
-  updateProg();
-  renderQNav();
-}
-
-function renderQuestionInput(q) {
-  const current = examState.answers[q.id];
-  if (q.type === 'mcq' || q.type === 'listening') {
-    return (q.options || []).map((opt) => `
-      <label class="opt ${current === opt ? 'sel' : ''}" onclick="pickOpt('${q.id}', ${JSON.stringify(opt)})">
-        <input type="radio" name="q${q.id}" ${current === opt ? 'checked' : ''}>
-        <span>${escapeHtml(opt)}</span>
-      </label>`).join('');
-  }
-  if (q.type === 'truefalse') {
-    return ['true', 'false'].map((v) => `
-      <label class="opt ${String(current) === v ? 'sel' : ''}" onclick="pickOpt('${q.id}', ${v})">
-        <input type="radio" name="q${q.id}" ${String(current) === v ? 'checked' : ''}>
-        <span>${v === 'true' ? 'صح' : 'غلط'}</span>
-      </label>`).join('');
-  }
-  if (q.type === 'multi') {
-    const selected = Array.isArray(current) ? current : [];
-    return (q.options || []).map((opt) => `
-      <label class="opt ${selected.includes(opt) ? 'sel' : ''}" onclick="toggleMultiOpt('${q.id}', ${JSON.stringify(opt)})">
-        <input type="checkbox" ${selected.includes(opt) ? 'checked' : ''}>
-        <span>${escapeHtml(opt)}</span>
-      </label>`).join('');
-  }
-  if (q.type === 'fillblank') {
-    return `<input type="text" class="inp" value="${escapeAttr_(current || '')}" oninput="setTextAnswer('${q.id}', this.value)" placeholder="اكتب إجابتك">`;
-  }
-  // essay
-  return `<textarea class="inp" rows="4" oninput="setTextAnswer('${q.id}', this.value)" placeholder="اكتب إجابتك">${escapeHtml(current || '')}</textarea>`;
-}
-
-// Selecting an option updates just that question's option list in place
-// (not the whole exam) — this is what stops a <audio> listening player
-// from being torn down and restarted every time an answer is picked, and
-// avoids re-rendering all N questions for a single click.
-function updateAnswer_(qId, value) {
-  examState.answers[qId] = value;
-  dirtyAnswerKeys.add(qId);
-  saveAnswersLocally_();
-  const optsWrap = document.querySelector(`.opts[data-qid="${qId}"]`);
-  const q = examState.questions.find((x) => x.id === qId);
-  if (optsWrap && q) optsWrap.innerHTML = renderQuestionInput(q);
-  updateProg();
-}
-
-function pickOpt(qId, value) { updateAnswer_(qId, value); }
-function toggleMultiOpt(qId, value) {
-  const arr = Array.isArray(examState.answers[qId]) ? [...examState.answers[qId]] : [];
-  const idx = arr.indexOf(value);
-  if (idx === -1) arr.push(value); else arr.splice(idx, 1);
-  updateAnswer_(qId, arr);
-}
-function setTextAnswer(qId, value) {
-  examState.answers[qId] = value;
-  dirtyAnswerKeys.add(qId);
-  saveAnswersLocally_();
-  updateProg();
-}
-
-function renderQNav() {
-  const nav = document.getElementById('q-nav');
-  if (!nav) return;
-  nav.innerHTML = examState.questions.map((_, i) => `
-    <button class="btn btn-sm ${i===examState.current?'btn-primary':'btn-secondary'}" style="width:36px; height:36px; padding:0; border-radius:50%;" onclick="goQ(${i})">${i+1}</button>
-  `).join('');
-  document.getElementById('prev-btn').disabled = examState.current === 0;
-  const next = document.getElementById('next-btn');
-  if (examState.current === examState.questions.length - 1) {
-    next.textContent = 'تسليم 🏁';
-    next.onclick = submitExam;
-  } else {
-    next.textContent = 'التالي →';
-    next.onclick = nextQ;
-  }
-  document.getElementById('submit-btn').disabled = false;
-}
-
-function goQ(n) { examState.current = n; document.querySelectorAll('.q-card').forEach((c, i) => c.style.display = i === n ? 'block' : 'none'); renderQNav(); }
-function nextQ() { if (examState.current < examState.questions.length - 1) goQ(examState.current + 1); }
-function prevQ() { if (examState.current > 0) goQ(examState.current - 1); }
-
-function updateProg() {
-  const total = examState.questions.length;
-  const ans = Object.keys(examState.answers).filter(k => {
-    const v = examState.answers[k];
-    return v !== undefined && v !== '' && !(Array.isArray(v) && v.length === 0);
-  }).length;
-  const fill = document.getElementById('progress-fill');
-  const txt = document.getElementById('progress-text');
-  if (fill) fill.style.width = total ? (ans / total * 100) + '%' : '0%';
-  if (txt) txt.textContent = ans + ' / ' + total;
-}
-
-// ===== Autosave =====
-// Batches every answer changed since the last save into ONE request,
-// on a fixed interval — never one request per click. Skips the request
-// entirely if nothing changed since the last tick.
-let autosaveInt;
-function startAutosaveLoop() {
-  clearInterval(autosaveInt);
-  autosaveInt = setInterval(runAutosave, 10000);
-  window.addEventListener('beforeunload', runAutosave);
-}
-async function runAutosave() {
-  if (!examState.attemptId || dirtyAnswerKeys.size === 0) return;
-  const keysToSave = [...dirtyAnswerKeys];
-  dirtyAnswerKeys.clear();
-  const batch = {};
-  keysToSave.forEach((k) => { batch[k] = examState.answers[k]; });
-  const status = document.getElementById('autosave-status');
-  if (status) status.textContent = 'جاري الحفظ...';
-  try {
-    const res = await api('/attempts/' + examState.attemptId + '/answers', {
+    const data = await api('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ answers: batch })
+      body: JSON.stringify({ username, password })
     });
-    if (status) status.textContent = (res && res.ok) ? '✓ تم الحفظ' : '';
-  } catch (e) {
-    // Failed silently — the keys are still in examState/localStorage,
-    // so re-add them to be retried on the next tick instead of losing them.
-    keysToSave.forEach((k) => dirtyAnswerKeys.add(k));
-    if (status) status.textContent = '';
-  }
-}
-
-// ===== Server-anchored countdown =====
-// The countdown always recomputes from examState.expiresAt (a server
-// timestamp), never from a locally-ticked "minutes left" counter — so a
-// slow tab, a laptop sleeping, or clock drift can't desync the timer from
-// what the server will actually enforce.
-let timerInt;
-function startTimer() {
-  clearInterval(timerInt);
-  const el = document.getElementById('timer');
-  const tick = () => {
-    const sec = Math.max(0, Math.round((examState.expiresAt - Date.now()) / 1000));
-    const m = Math.floor(sec / 60).toString().padStart(2, '0');
-    const s = (sec % 60).toString().padStart(2, '0');
-    if (el) el.textContent = m + ':' + s;
-    if (sec <= 0) { clearInterval(timerInt); confirmSubmit(); }
-  };
-  tick();
-  timerInt = setInterval(tick, 1000);
-}
-
-function submitExam() {
-  const total = examState.questions.length;
-  const ans = Object.keys(examState.answers).length;
-  const modal = document.getElementById('submit-modal');
-  const msg = document.getElementById('modal-msg');
-  if (modal) modal.style.display = 'flex';
-  if (msg) msg.innerHTML = `أجبت على <strong style="color:var(--text);">${ans}</strong> من <strong style="color:var(--text);">${total}</strong> سؤال.`;
-}
-
-function closeModal() { document.getElementById('submit-modal').style.display = 'none'; }
-
-// Submit now returns immediately (202 PROCESSING) — the actual Sheets
-// write happens in a batch on the server. We show the "received" state
-// right away, then poll /:id/status with growing intervals (2s, 4s, 8s,
-// then staying at 8s) until it settles, instead of holding one long HTTP
-// connection open or hammering the server every second.
-async function confirmSubmit() {
-  closeModal();
-  clearInterval(timerInt);
-  clearInterval(autosaveInt);
-  const confirmBtn = document.querySelector('#submit-modal .btn-primary');
-  toast('⏳ جاري تسليم الامتحان...');
-  await withButtonLock(confirmBtn, 'جاري التسليم...', async () => {
-    try {
-      const data = await api('/attempts/' + examState.attemptId + '/submit', {
-        method: 'POST',
-        body: JSON.stringify({ answers: examState.answers })
-      });
-      if (!data || !data.ok) {
-        toast('❌ ' + ((data && data.error) || 'فشل تسليم الامتحان'));
-        return;
-      }
-      clearAnswersLocally_();
-      showSubmissionReceived_();
-
-      if (data.data && data.data.status === 'COMPLETED') {
-        // Already flushed (e.g. queue was empty and flushed instantly) —
-        // no need to poll at all.
-        showResult(data.data);
-        return;
-      }
-      pollSubmissionStatus_(examState.attemptId);
-    } catch (e) {}
-  });
-}
-
-// Step 1 of the two-step message from the spec: confirm receipt instantly,
-// independently of whether Sheets has actually been written to yet.
-function showSubmissionReceived_() {
-  const modal = document.getElementById('result-modal');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  const scoreEl = document.getElementById('result-score');
-  const rankEl = document.getElementById('result-rank');
-  const timeEl = document.getElementById('result-time');
-  if (scoreEl) scoreEl.textContent = '✓';
-  if (rankEl) rankEl.textContent = 'تم استلام إجاباتك';
-  if (timeEl) timeEl.textContent = 'جاري حفظ الامتحان وحساب النتيجة...';
-}
-
-// Graduated polling: 2s, 4s, 8s, then holds at 8s. Stops immediately on
-// COMPLETED or FAILED — never polls once a second, never polls forever.
-function pollSubmissionStatus_(attemptId) {
-  const delays = [2000, 4000, 8000];
-  let step = 0;
-
-  const poll = async () => {
-    let data;
-    try {
-      data = await api('/attempts/' + attemptId + '/status');
-    } catch (e) {
-      // Connection hiccup — just try again on the same backoff schedule.
+    if (data.token) {
+      setToken(data.token);
+      toast('✅ تم تسجيل الدخول');
+      setTimeout(() => location.href = 'index.html', 800);
+    } else {
+      toast('❌ ' + (data.error || 'بيانات غير صحيحة'));
     }
-    const status = data && data.ok && data.data && data.data.status;
-
-    if (status === 'COMPLETED') {
-      showResult(data.data);
-      return;
-    }
-    if (status === 'FAILED') {
-      toast('❌ حدث خطأ أثناء حفظ الامتحان، سيتم إعادة المحاولة تلقائيًا');
-      // The server-side batch processor retries on its own; keep polling
-      // so the student sees it resolve without needing to do anything.
-    }
-
-    const delay = delays[Math.min(step, delays.length - 1)];
-    step += 1;
-    setTimeout(poll, delay);
-  };
-
-  setTimeout(poll, delays[0]);
+  } catch (e) {}
 }
-
-function showResult(attempt) {
-  const modal = document.getElementById('result-modal');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  const scoreEl = document.getElementById('result-score');
-  const rankEl = document.getElementById('result-rank');
-  const timeEl = document.getElementById('result-time');
-
-  if (!attempt || attempt.resultsPublished === false) {
-    // Results not published yet — never show a score/rank the student
-    // wasn't meant to see, even transiently.
-    if (scoreEl) scoreEl.textContent = '✅';
-    if (rankEl) rankEl.textContent = 'تم تسليم الامتحان بنجاح.';
-    if (timeEl) timeEl.textContent = 'سيتم إعلان النتيجة بعد اعتماد المعلم.';
-    return;
-  }
-  const pct = Math.round(parseFloat(attempt.percentage) || 0);
-  const mins = Math.round((parseFloat(attempt.durationSeconds) || 0) / 60);
-  if (scoreEl) scoreEl.textContent = pct + '%';
-  if (rankEl) rankEl.textContent = attempt.needsManualGrading ? 'بعض الأسئلة تحتاج تصحيح يدوي' : '';
-  if (timeEl) timeEl.textContent = 'الوقت: ' + mins + ' دقيقة';
-}
-
-function escapeAttr_(str) { return escapeHtml(str).replace(/"/g, '&quot;'); }
 
 // Dashboard
-async function loadDashboard() {
-  const user = getUser();
-  document.getElementById('student-name').textContent = user.name || '—';
-  document.getElementById('nav-name').textContent = user.name || '—';
+async function loadAdminDashboard() {
   try {
-    const data = await api('/students/dashboard');
-    if (data.courses != null) document.getElementById('dash-courses').textContent = data.courses;
-    if (data.exams != null) document.getElementById('dash-exams').textContent = data.exams;
-    if (data.avgScore != null) document.getElementById('dash-score').textContent = data.avgScore + '%';
-    if (data.rank != null) document.getElementById('dash-rank').textContent = '#' + data.rank;
+    const data = await api('/analytics/overview');
+    if (data.students != null) document.getElementById('stat-students').textContent = data.students;
+    if (data.courses != null) document.getElementById('stat-courses').textContent = data.courses;
+    if (data.exams != null) document.getElementById('stat-exams').textContent = data.exams;
+    if (data.activeCodes != null) document.getElementById('stat-codes').textContent = data.activeCodes;
 
-    // Progress
-    const prog = document.getElementById('my-progress');
-    const progEmpty = document.getElementById('progress-empty');
-    if (prog) {
-      prog.innerHTML = '';
-      if (!data.progress || !data.progress.length) { if (progEmpty) progEmpty.style.display = 'block'; }
-      else {
-        if (progEmpty) progEmpty.style.display = 'none';
-        data.progress.forEach(p => {
-          const div = document.createElement('div');
-          div.className = 'card';
-          div.innerHTML = `
-            <div class="card-body">
-              <h3>${p.courseTitle}</h3>
-              <div style="margin-top:12px;">
-                <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:0.85rem;">
-                  <span style="color:var(--text-secondary);">التقدم</span>
-                  <span style="color:var(--accent-light); font-weight:600;">${p.progress}%</span>
-                </div>
-                <div class="prog"><div class="prog-fill" style="width:${p.progress}%"></div></div>
-              </div>
-              <div style="margin-top:12px; font-size:0.85rem; color:var(--text-muted);">
-                <span>🎥 ${p.videosWatched}/${p.totalVideos} فيديو</span>
-                <span style="margin-right:12px;">📝 ${p.examsTaken} امتحان</span>
-              </div>
-            </div>
-          `;
-          prog.appendChild(div);
-        });
-      }
-    }
-
-    // Recent exams
-    const recent = document.getElementById('recent-exams');
-    const recentEmpty = document.getElementById('exams-empty');
-    if (recent) {
-      recent.innerHTML = '';
-      if (!data.recentExams || !data.recentExams.length) { if (recentEmpty) recentEmpty.style.display = 'block'; }
-      else {
-        if (recentEmpty) recentEmpty.style.display = 'none';
-        data.recentExams.forEach(ex => {
-          const div = document.createElement('div');
-          div.style.cssText = 'background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:16px 20px; display:flex; justify-content:space-between; align-items:center;';
-          div.innerHTML = `
+    // Recent activity
+    const act = document.getElementById('recent-activity');
+    if (act && data.recentActivity) {
+      act.innerHTML = '';
+      data.recentActivity.forEach(a => {
+        const div = document.createElement('div');
+        div.style.cssText = 'background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px 20px; display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;';
+        div.innerHTML = `
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span style="font-size:1.2rem;">${a.icon || '•'}</span>
             <div>
-              <div style="font-weight:600;">${escapeHtml(ex.title)}</div>
-              <div style="color:var(--text-muted); font-size:0.85rem; margin-top:2px;">${ex.date || ''}</div>
+              <div style="font-weight:600; font-size:0.9rem;">${escapeHtmlAdmin(a.text)}</div>
+              <div style="color:var(--text-muted); font-size:0.8rem;">${a.time || ''}</div>
             </div>
-            <span class="badge ${ex.score >= 50 ? 'badge-ok' : 'badge-err'}">${ex.score}%</span>
-          `;
-          recent.appendChild(div);
-        });
-      }
+          </div>
+        `;
+        act.appendChild(div);
+      });
     }
 
-    // Leaderboard
-    const lb = document.getElementById('leaderboard-list');
-    const lbEmpty = document.getElementById('leaderboard-empty');
-    if (lb) {
-      lb.innerHTML = '';
-      if (!data.leaderboard || !data.leaderboard.length) { if (lbEmpty) lbEmpty.style.display = 'block'; }
-      else {
-        if (lbEmpty) lbEmpty.style.display = 'none';
-        data.leaderboard.forEach((s, i) => {
-          const div = document.createElement('div');
-          div.className = 'leaderboard-item';
-          const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
-          div.innerHTML = `
-            <div class="leaderboard-rank ${rankClass}">${i + 1}</div>
-            <div style="flex:1;">
-              <div style="font-weight:600;">${escapeHtml(s.name)}</div>
-              <div style="color:var(--text-muted); font-size:0.85rem;">${s.examsCount} امتحان</div>
-            </div>
-            <div style="font-weight:700; color:var(--accent-light);">${s.avgScore}%</div>
-          `;
-          lb.appendChild(div);
-        });
-      }
+    // Top students
+    const top = document.getElementById('top-students');
+    if (top && data.topStudents) {
+      top.innerHTML = '';
+      data.topStudents.forEach((s, i) => {
+        const div = document.createElement('div');
+        div.className = 'leaderboard-item';
+        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+        div.innerHTML = `
+          <div class="leaderboard-rank ${rankClass}">${i + 1}</div>
+          <div style="flex:1;">
+            <div style="font-weight:600;">${escapeHtmlAdmin(s.name)}</div>
+            <div style="color:var(--text-muted); font-size:0.85rem;">${escapeHtmlAdmin(s.course || '')}</div>
+          </div>
+          <div style="font-weight:700; color:var(--accent-light);">${s.avgScore}%</div>
+        `;
+        top.appendChild(div);
+      });
     }
   } catch (e) {}
 }
 
-// ===== Video player + comments =====
-let videoProgressTimer = null;
-let videoWatchState = { videoId: null, startedAt: 0, durationSeconds: 0, sentPercentage: 0 };
+// Units / Courses
+async function loadUnitsPage() {
+  loadUnitsList();
+}
 
-async function loadVideoPage() {
-  const params = new URLSearchParams(location.search);
-  const id = params.get('id');
-  if (!id) { toast('❌ فيديو غير موجود'); return; }
+async function loadUnitsList() {
   try {
-    const res = await api('/videos/' + id);
-    const video = res.data;
-    if (!video) { toast('❌ الفيديو غير موجود'); return; }
-    document.getElementById('video-title').textContent = video.title || 'فيديو';
-    document.getElementById('back-to-course').href = 'course.html?id=' + video.unitId;
-    const frame = document.getElementById('video-frame');
-    if (frame && video.driveFileId) {
-      frame.src = 'https://drive.google.com/file/d/' + video.driveFileId + '/preview';
-    } else if (frame && video.driveUrl) {
-      frame.src = video.driveUrl;
-    }
-
-    videoWatchState = { videoId: id, startedAt: Date.now(), durationSeconds: parseFloat(video.durationSeconds) || 0, sentPercentage: 0 };
-    startVideoProgressTracking();
-    loadComments(id);
-  } catch (e) { toast('❌ فشل تحميل الفيديو'); }
-}
-
-function startVideoProgressTracking() {
-  if (videoProgressTimer) clearInterval(videoProgressTimer);
-  videoProgressTimer = setInterval(sendVideoProgress, 15000);
-  window.addEventListener('beforeunload', sendVideoProgress);
-}
-
-async function sendVideoProgress() {
-  if (!videoWatchState.videoId) return;
-  const watchSeconds = Math.round((Date.now() - videoWatchState.startedAt) / 1000);
-  const watchPercentage = videoWatchState.durationSeconds > 0
-    ? Math.min(100, Math.round((watchSeconds / videoWatchState.durationSeconds) * 100))
-    : Math.min(95, Math.round(watchSeconds / 3)); // rough fallback if no duration is set
-  if (watchPercentage <= videoWatchState.sentPercentage) return;
-  videoWatchState.sentPercentage = watchPercentage;
-  try {
-    await api('/videos/' + videoWatchState.videoId + '/progress', {
-      method: 'POST',
-      body: JSON.stringify({ watchSeconds, watchPercentage })
-    });
-  } catch (e) {}
-}
-
-async function loadComments(videoId) {
-  const list = document.getElementById('comments-list');
-  const empty = document.getElementById('comments-empty');
-  if (!list) return;
-  try {
-    const res = await api('/comments/video/' + videoId);
-    const comments = res.data || [];
-    list.innerHTML = '';
-    if (!comments.length) { if (empty) empty.style.display = 'block'; return; }
-    if (empty) empty.style.display = 'none';
-    const me = getUser();
-    comments.forEach(c => {
-      const div = document.createElement('div');
-      div.style.cssText = 'padding:14px; background:var(--bg); border-radius:var(--radius-md); border:1px solid var(--border);';
-      const isTeacher = c.authorRole === 'admin';
-      div.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <span style="font-weight:600; ${isTeacher ? 'color:var(--accent-light);' : ''}">${isTeacher ? '👨‍🏫 ' : ''}${escapeHtml(c.authorName || 'مستخدم')}</span>
-          <span style="color:var(--text-muted); font-size:0.75rem;">${formatDate(c.createdAt)}</span>
-        </div>
-        <p style="color:var(--text-secondary); line-height:1.7;">${escapeHtml(c.text)}</p>
-        ${(me.id === c.authorId) ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px; color:var(--danger);" onclick="deleteComment('${c.id}', '${videoId}')">حذف</button>` : ''}
-      `;
-      list.appendChild(div);
-    });
-  } catch (e) { if (empty) empty.style.display = 'block'; }
-}
-
-async function postComment() {
-  const input = document.getElementById('comment-input');
-  const params = new URLSearchParams(location.search);
-  const videoId = params.get('id');
-  const text = input?.value.trim();
-  if (!text) return;
-  try {
-    const res = await api('/comments/video/' + videoId, { method: 'POST', body: JSON.stringify({ text }) });
-    if (res.ok) { input.value = ''; loadComments(videoId); }
-    else toast('❌ ' + (res.error || 'فشل إرسال التعليق'));
-  } catch (e) {}
-}
-
-async function deleteComment(commentId, videoId) {
-  try {
-    await api('/comments/' + commentId, { method: 'DELETE' });
-    loadComments(videoId);
-  } catch (e) {}
-}
-
-// ===== Presentation viewer =====
-async function loadPresentationPage() {
-  const params = new URLSearchParams(location.search);
-  const id = params.get('id');
-  if (!id) { toast('❌ ملف غير موجود'); return; }
-  try {
-    const res = await api('/presentations/' + id);
-    const item = res.data;
-    if (!item) { toast('❌ الملف غير موجود'); return; }
-    document.getElementById('presentation-title').textContent = item.title || 'عرض تقديمي';
-    document.getElementById('back-to-course').href = 'course.html?id=' + item.unitId;
-    const frame = document.getElementById('presentation-frame');
-    const previewUrl = item.driveFileId
-      ? 'https://drive.google.com/file/d/' + item.driveFileId + '/preview'
-      : item.driveUrl;
-    if (frame) frame.src = previewUrl;
-    renderPresentationWatermark();
-    setupPresentationDeterrents();
-  } catch (e) { toast('❌ فشل تحميل العرض التقديمي'); }
-}
-
-// Tiles the student's name + code across the presentation area so any
-// screenshot or photo of the screen is traceable back to them. This is a
-// deterrent, not a real block — nothing on the web can stop someone from
-// literally photographing their own screen.
-function renderPresentationWatermark() {
-  const layer = document.getElementById('presentation-watermark');
-  if (!layer) return;
-  const user = getUser();
-  const label = `${user.name || ''} · ${user.code || ''}`;
-  let html = '';
-  for (let row = 0; row < 6; row++) {
-    html += `<div style="position:absolute; top:${row * 18}%; left:${(row % 2) * -8}%; width:130%; display:flex; gap:60px; opacity:0.16; transform:rotate(-18deg); white-space:nowrap; font-size:0.8rem; color:#fff;">`;
-    for (let col = 0; col < 6; col++) html += `<span>${escapeHtml(label)}</span>`;
-    html += '</div>';
-  }
-  layer.innerHTML = html;
-}
-
-// A handful of low-friction deterrents against the *casual* "right click,
-// save" or "select all, copy" path. None of this stops a determined
-// person with a phone camera or a screen recorder — that's simply not
-// something any website can prevent.
-function setupPresentationDeterrents() {
-  const viewer = document.getElementById('presentation-viewer');
-  if (!viewer) return;
-
-  viewer.addEventListener('contextmenu', (e) => e.preventDefault());
-  viewer.addEventListener('dragstart', (e) => e.preventDefault());
-  viewer.style.userSelect = 'none';
-
-  const cover = document.getElementById('presentation-blur-cover');
-  const blurNow = () => { if (cover) cover.style.display = 'flex'; };
-  const unblurNow = () => { if (cover) cover.style.display = 'none'; };
-
-  // Hide the content the moment the tab loses focus or is backgrounded —
-  // makes casual screen-recording apps (which usually need the tab
-  // visible/focused) capture a blurred cover instead of the real slides.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) blurNow(); else unblurNow();
-  });
-  window.addEventListener('blur', blurNow);
-  window.addEventListener('focus', unblurNow);
-
-  // Block the most common keyboard shortcuts someone would reach for
-  // first (Print, Save, DevTools). Anyone who actually knows what
-  // they're doing can still get around this — it just raises the floor
-  // above "accidentally easy".
-  document.addEventListener('keydown', (e) => {
-    const key = e.key.toLowerCase();
-    const blocked =
-      key === 'printscreen' ||
-      (e.ctrlKey && (key === 'p' || key === 's' || key === 'u')) ||
-      key === 'f12' ||
-      (e.ctrlKey && e.shiftKey && (key === 'i' || key === 'c' || key === 'j'));
-    if (blocked) {
-      e.preventDefault();
-      toast('❌ العرض ده محمي');
-    }
-  });
-}
-
-// ===== Chat with teacher =====
-let chatPollTimer = null;
-async function loadChatPage() {
-  const user = getUser();
-  const nameEl = document.getElementById('nav-name');
-  if (nameEl) nameEl.textContent = user.name || '—';
-  await refreshChatMessages();
-  if (chatPollTimer) clearInterval(chatPollTimer);
-  chatPollTimer = setInterval(refreshChatMessages, 8000);
-}
-
-async function refreshChatMessages() {
-  const box = document.getElementById('chat-messages');
-  const empty = document.getElementById('chat-empty');
-  if (!box) return;
-  try {
-    const res = await api('/chat/me');
-    const messages = res.data || [];
-    if (!messages.length) {
-      box.innerHTML = '';
-      if (empty) empty.style.display = 'block';
+    const res = await api('/units');
+    const units = res && res.data ? res.data : [];
+    const wrap = document.getElementById('units-list');
+    if (!wrap) return;
+    if (!units.length) {
+      wrap.innerHTML = '<p style="color:var(--text-muted);">لا توجد كورسات لسه — دوس "كورس جديد" عشان تضيف أول كورس.</p>';
       return;
     }
-    if (empty) empty.style.display = 'none';
-    const wasNearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-    box.innerHTML = messages.map(m => {
-      const mine = m.senderRole === 'student';
-      return `
-        <div style="align-self:${mine ? 'flex-start' : 'flex-end'}; max-width:75%;">
-          <div style="background:${mine ? 'var(--bg)' : 'var(--accent)'}; color:${mine ? 'var(--text)' : '#fff'}; padding:10px 14px; border-radius:var(--radius-md); line-height:1.6;">
-            ${escapeHtml(m.text)}
+    units.sort((a, b) => (parseFloat(a.order) || 0) - (parseFloat(b.order) || 0));
+    wrap.innerHTML = units.map(u => `
+      <div class="card">
+        <div class="card-body">
+          <span class="badge ${u.status === 'published' ? 'badge-ok' : 'badge-warn'}">${u.status === 'published' ? '✓ منشور' : (u.status === 'hidden' ? 'مخفي' : 'مسودة')}</span>
+          <h3 style="margin-top:12px;">${escapeHtmlAdmin(u.title)}</h3>
+          <p>${escapeHtmlAdmin(u.description || 'بدون وصف')}</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openVideosPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🎥 الفيديوهات</button>
+            ${u.status === 'published'
+              ? `<button class="btn btn-secondary btn-sm" onclick="hideUnit('${u.id}')">🙈 إخفاء</button>`
+              : `<button class="btn btn-primary btn-sm" onclick="publishUnit('${u.id}')">🚀 نشر</button>`}
+            <button class="btn btn-danger btn-sm" onclick="deleteUnit('${u.id}')">🗑 حذف</button>
           </div>
-          <div style="color:var(--text-muted); font-size:0.7rem; margin-top:4px; text-align:${mine ? 'right' : 'left'};">${formatDate(m.createdAt)}</div>
         </div>
-      `;
-    }).join('');
-    if (wasNearBottom) box.scrollTop = box.scrollHeight;
+      </div>
+    `).join('');
   } catch (e) {}
 }
 
-async function sendChatMessage() {
+function openAddUnitForm() {
+  document.getElementById('unit-form-wrap').style.display = 'block';
+}
+function closeAddUnitForm() {
+  document.getElementById('unit-form-wrap').style.display = 'none';
+  document.getElementById('unit-title').value = '';
+  document.getElementById('unit-description').value = '';
+}
+
+async function saveUnit() {
+  const title = document.getElementById('unit-title')?.value.trim();
+  const description = document.getElementById('unit-description')?.value.trim();
+  if (!title) { toast('❌ اكتب عنوان الكورس'); return; }
+  try {
+    const res = await api('/units', {
+      method: 'POST',
+      body: JSON.stringify({ title, description })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الكورس (مسودة — دوس نشر عشان يظهر للطلاب)');
+      closeAddUnitForm();
+      loadUnitsList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الكورس'));
+    }
+  } catch (e) {}
+}
+
+async function publishUnit(id) {
+  try {
+    const res = await api('/units/' + id + '/publish', { method: 'POST' });
+    if (res && res.ok) { toast('✅ الكورس بقى منشور للطلاب'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+async function hideUnit(id) {
+  try {
+    const res = await api('/units/' + id + '/hide', { method: 'POST' });
+    if (res && res.ok) { toast('✅ تم إخفاء الكورس'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+async function deleteUnit(id) {
+  if (!confirm('حذف الكورس هيمسح كل الفيديوهات والامتحانات جواه كمان. متأكد؟')) return;
+  try {
+    const res = await api('/units/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف الكورس'); loadUnitsList(); }
+  } catch (e) {}
+}
+
+function escapeHtmlAdmin(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Units / Courses — videos
+let currentVideosUnitId = null;
+
+function openVideosPanel(unitId, unitTitle) {
+  currentVideosUnitId = unitId;
+  document.getElementById('videos-wrap').style.display = 'block';
+  document.getElementById('videos-unit-title').textContent = unitTitle;
+  setVideoMode('upload');
+  loadVideosForUnit();
+  document.getElementById('videos-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeVideosPanel() {
+  currentVideosUnitId = null;
+  document.getElementById('videos-wrap').style.display = 'none';
+}
+function setVideoMode(mode) {
+  document.getElementById('video-mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('video-mode-link').style.display = mode === 'link' ? 'block' : 'none';
+  document.getElementById('video-mode-upload-btn').className = 'btn btn-sm ' + (mode === 'upload' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('video-mode-link-btn').className = 'btn btn-sm ' + (mode === 'link' ? 'btn-primary' : 'btn-secondary');
+}
+
+async function loadVideosForUnit() {
+  if (!currentVideosUnitId) return;
+  const list = document.getElementById('videos-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/videos/unit/' + currentVideosUnitId);
+    const videos = res && res.data ? res.data : [];
+    if (!videos.length) {
+      list.innerHTML = '<p style="color:var(--text-muted);">مفيش فيديوهات في الكورس ده لسه.</p>';
+      return;
+    }
+    videos.sort((a, b) => (parseFloat(a.order) || 0) - (parseFloat(b.order) || 0));
+    list.innerHTML = videos.map(v => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span>▶️</span>
+          <span>${escapeHtmlAdmin(v.title)}</span>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteVideo('${v.id}')">🗑</button>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+async function uploadVideo() {
+  const title = document.getElementById('video-title')?.value.trim();
+  const fileInput = document.getElementById('video-file');
+  const file = fileInput?.files?.[0];
+  if (!currentVideosUnitId) return;
+  if (!title) { toast('❌ اكتب عنوان الفيديو'); return; }
+  if (!file) { toast('❌ اختار ملف الفيديو'); return; }
+
+  const progressWrap = document.getElementById('video-upload-progress');
+  const fill = document.getElementById('video-upload-fill');
+  const pct = document.getElementById('video-upload-pct');
+  const btn = document.getElementById('video-upload-btn');
+  progressWrap.style.display = 'block';
+  btn.disabled = true;
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('subfolder', 'videos');
+
+    const uploadRes = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API + '/upload');
+      const token = getToken();
+      if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const p = Math.round((e.loaded / e.total) * 100);
+          fill.style.width = p + '%';
+          pct.textContent = p + '%';
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401) { logout(); return; }
+        try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
+      };
+      xhr.onerror = () => reject(new Error('network error'));
+      xhr.send(formData);
+    });
+
+    if (!uploadRes || !uploadRes.ok) {
+      toast('❌ ' + (uploadRes?.error || 'فشل رفع الفيديو'));
+      return;
+    }
+
+    const res = await api('/videos', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId: currentVideosUnitId,
+        title,
+        driveFileId: uploadRes.data.driveFileId,
+        driveUrl: uploadRes.data.previewUrl || uploadRes.data.driveUrl
+      })
+    });
+    if (res && res.ok) {
+      toast('✅ تم رفع الفيديو');
+      document.getElementById('video-title').value = '';
+      fileInput.value = '';
+      loadVideosForUnit();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل حفظ الفيديو'));
+    }
+  } catch (e) {
+    toast('❌ فشل رفع الفيديو');
+  } finally {
+    progressWrap.style.display = 'none';
+    fill.style.width = '0%';
+    pct.textContent = '0%';
+    btn.disabled = false;
+  }
+}
+
+async function addVideoByLink() {
+  const title = document.getElementById('video-title')?.value.trim();
+  const link = document.getElementById('video-link')?.value.trim();
+  if (!currentVideosUnitId) return;
+  if (!title) { toast('❌ اكتب عنوان الفيديو'); return; }
+  if (!link) { toast('❌ الصق رابط الفيديو'); return; }
+  try {
+    const res = await api('/videos', {
+      method: 'POST',
+      body: JSON.stringify({ unitId: currentVideosUnitId, title, driveUrl: link })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الفيديو');
+      document.getElementById('video-title').value = '';
+      document.getElementById('video-link').value = '';
+      loadVideosForUnit();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الفيديو'));
+    }
+  } catch (e) {}
+}
+
+async function deleteVideo(id) {
+  if (!confirm('متأكد إنك عايز تحذف الفيديو ده؟')) return;
+  try {
+    const res = await api('/videos/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف الفيديو'); loadVideosForUnit(); }
+  } catch (e) {}
+}
+
+// Codes
+async function loadCodesPage() {
+  loadCodesList();
+}
+
+async function loadCodesList() {
+  try {
+    const res = await api('/codes');
+    const codes = res && res.data ? res.data : [];
+    const tbody = document.getElementById('codes-table');
+    if (!tbody) return;
+    if (!codes.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted);">لا توجد أكواد</td></tr>';
+      return;
+    }
+    tbody.innerHTML = codes.map(c => `
+      <tr>
+        <td style="font-family:monospace; font-weight:600; color:var(--accent-light);">${c.code}</td>
+        <td>${c.unitId ? 'كورس محدد' : 'كل الكورسات'}</td>
+        <td><span class="badge ${c.status === 'active' ? 'badge-ok' : 'badge-info'}">${c.status === 'active' ? '✓ مستخدم' : 'متاح'}</span></td>
+        <td>${escapeHtmlAdmin(c.studentName || '—')}</td>
+        <td>${c.activationDate ? new Date(c.activationDate).toLocaleDateString('ar-EG') : '—'}</td>
+        <td><button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="showQrCode('${c.code}')">📱 QR</button> <button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="deleteCode('${c.id}')">🗑 حذف</button></td>
+      </tr>
+    `).join('');
+  } catch (e) {}
+}
+
+async function generateCodes() {
+  const count = document.getElementById('code-count')?.value;
+  const prefix = document.getElementById('code-prefix')?.value.trim();
+  toast('⏳ جاري توليد الأكواد...');
+  try {
+    const res = await api('/codes/generate', {
+      method: 'POST',
+      body: JSON.stringify({ count: parseInt(count) || 10, prefix: prefix || undefined })
+    });
+    if (res && res.ok) {
+      toast('✅ تم توليد الأكواد');
+      loadCodesList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل توليد الأكواد'));
+    }
+  } catch (e) {}
+}
+
+async function deleteCode(id) {
+  if (!confirm('متأكد إنك عايز تحذف الكود ده؟')) return;
+  try {
+    const res = await api('/codes/' + id, { method: 'DELETE' });
+    if (res && res.ok) {
+      toast('✅ تم حذف الكود');
+      loadCodesList();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل حذف الكود'));
+    }
+  } catch (e) {}
+}
+
+function showQrCode(code) {
+  const modal = document.getElementById('qr-modal');
+  const canvas = document.getElementById('qr-canvas');
+  const label = document.getElementById('qr-modal-code');
+  if (!modal || !canvas || typeof QRCode === 'undefined') { toast('❌ مكتبة QR مش متاحة'); return; }
+  label.textContent = code;
+  const link = STUDENT_SITE_URL + '/login.html?code=' + encodeURIComponent(code);
+  QRCode.toCanvas(canvas, link, { width: 220, margin: 2 }, (err) => { if (err) toast('❌ فشل توليد QR'); });
+  modal.style.display = 'flex';
+}
+function closeQrModal() {
+  const modal = document.getElementById('qr-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// Students
+let allStudentsCache = [];
+async function loadStudentsPage() {
+  try {
+    const data = await api('/students');
+    allStudentsCache = data.students || [];
+    renderStudentsTable(allStudentsCache);
+  } catch (e) {}
+}
+
+function renderStudentsTable(students) {
+  const tbody = document.getElementById('students-table');
+  const emptySearch = document.getElementById('students-empty-search');
+  if (!tbody) return;
+  if (!students.length) {
+    tbody.innerHTML = '';
+    if (emptySearch) emptySearch.style.display = 'block';
+    return;
+  }
+  if (emptySearch) emptySearch.style.display = 'none';
+  tbody.innerHTML = students.map(s => `
+    <tr>
+      <td style="font-weight:600;">${escapeHtmlAdmin(s.name)}</td>
+      <td style="font-family:monospace; color:var(--text-muted);">${escapeHtmlAdmin(s.code)}</td>
+      <td>${escapeHtmlAdmin(s.courseTitle || '—')}</td>
+      <td>
+        <div class="prog" style="width:100px;"><div class="prog-fill" style="width:${s.progress || 0}%"></div></div>
+        <span style="font-size:0.8rem; color:var(--text-muted);">${s.progress || 0}%</span>
+      </td>
+      <td>${s.examsTaken || 0}</td>
+      <td style="font-weight:700; color:${s.avgScore >= 50 ? 'var(--success)' : 'var(--danger)'}">${s.avgScore != null ? s.avgScore + '%' : '—'}</td>
+      <td>${s.videosWatched || 0}/${s.totalVideos || 0} <span style="color:var(--text-muted); font-size:0.8rem;">فيديو</span></td>
+      <td style="display:flex; gap:6px;">
+        <a href="student-detail.html?id=${s.id}" class="btn btn-secondary btn-sm">👁️ عرض</a>
+        <a href="chat.html?studentId=${s.id}" class="btn btn-ghost btn-sm">💬</a>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterStudents() {
+  const q = (document.getElementById('student-search')?.value || '').trim().toLowerCase();
+  if (!q) { renderStudentsTable(allStudentsCache); return; }
+  const filtered = allStudentsCache.filter(s => (s.name || '').toLowerCase().includes(q) || (s.code || '').toLowerCase().includes(q));
+  renderStudentsTable(filtered);
+}
+
+// Student detail (activity view reached from the search/list page)
+async function loadStudentDetailPage() {
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id');
+  if (!id) { toast('❌ طالب غير موجود'); return; }
+  try {
+    const res = await api('/students/' + id + '/activity');
+    if (!res.ok) { toast('❌ ' + (res.error || 'فشل تحميل بيانات الطالب')); return; }
+    const d = res.data;
+
+    document.getElementById('detail-name').textContent = d.student.name || '—';
+    document.getElementById('detail-code').textContent = d.student.code || '—';
+    if (d.student.code && typeof QRCode !== 'undefined') {
+      const canvas = document.getElementById('detail-qr-canvas');
+      const link = STUDENT_SITE_URL + '/login.html?code=' + encodeURIComponent(d.student.code);
+      QRCode.toCanvas(canvas, link, { width: 90, margin: 1 }, () => {});
+    }
+    document.getElementById('detail-last-login').textContent = d.student.lastLoginAt ? new Date(d.student.lastLoginAt).toLocaleString('ar-EG') : '—';
+    document.getElementById('detail-chat-link').href = 'chat.html?studentId=' + id;
+
+    document.getElementById('detail-videos-watched').textContent = d.videosWatched || 0;
+    document.getElementById('detail-exams-taken').textContent = (d.examActivity || []).length;
+    document.getElementById('detail-comments-count').textContent = (d.comments || []).length;
+    document.getElementById('detail-units-count').textContent = (d.enrolledUnits || []).length;
+
+    const videosBox = document.getElementById('detail-videos');
+    videosBox.innerHTML = (d.videoActivity || []).length
+      ? d.videoActivity.map(v => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+            <span>${v.videoTitle}</span>
+            <span class="badge ${v.status === 'finished' ? 'badge-ok' : 'badge-info'}">${v.status === 'finished' ? '✓ خلص' : v.watchPercentage + '%'}</span>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ما شافش أي فيديو</p>';
+
+    const examsBox = document.getElementById('detail-exams');
+    examsBox.innerHTML = (d.examActivity || []).length
+      ? d.examActivity.map(e => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+            <span>${e.examTitle}</span>
+            <span style="font-weight:700; color:${e.percentage >= 50 ? 'var(--success)' : 'var(--danger)'};">${e.percentage}%</span>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ما دخلش أي امتحان</p>';
+
+    const commentsBox = document.getElementById('detail-comments');
+    commentsBox.innerHTML = (d.comments || []).length
+      ? d.comments.map(c => `
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
+            <div style="color:var(--text-muted); font-size:0.8rem; margin-bottom:4px;">على فيديو: ${escapeHtmlAdmin(c.videoTitle)}</div>
+            <div>${escapeHtmlAdmin(c.text)}</div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لسه ماعملش أي تعليق</p>';
+  } catch (e) { toast('❌ فشل تحميل بيانات الطالب'); }
+}
+
+// Presentations (PowerPoint) management
+async function loadPresentationsPage() {
+  try {
+    const units = (await api('/units')).data || [];
+    const select = document.getElementById('pres-unit');
+    if (select) {
+      select.innerHTML = '<option value="">اختر الكورس</option>' + units.map(u => `<option value="${u.id}">${u.title}</option>`).join('');
+    }
+  } catch (e) {}
+}
+
+async function uploadPresentation() {
+  const unitId = document.getElementById('pres-unit')?.value;
+  const title = document.getElementById('pres-title')?.value.trim();
+  const fileInput = document.getElementById('pres-file');
+  const file = fileInput?.files?.[0];
+  if (!unitId) { toast('❌ اختر الكورس أولاً'); return; }
+  if (!title) { toast('❌ اكتب عنوان العرض'); return; }
+  if (!file) { toast('❌ اختر ملف بوربوينت'); return; }
+
+  toast('⏳ جاري رفع الملف...');
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('subfolder', 'presentations');
+    formData.append('restrictDownload', 'true');
+    const token = getToken();
+    const uploadRes = await fetch(API + '/upload', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+      body: formData
+    });
+    const uploadData = await uploadRes.json();
+    if (!uploadData.ok) { toast('❌ ' + (uploadData.error || 'فشل رفع الملف')); return; }
+
+    const created = await api('/presentations', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId, title,
+        driveFileId: uploadData.data.driveFileId,
+        driveUrl: uploadData.data.previewUrl || uploadData.data.driveUrl
+      })
+    });
+    if (created.ok) {
+      toast('✅ تم رفع العرض التقديمي');
+      document.getElementById('pres-title').value = '';
+      fileInput.value = '';
+      loadPresentationsList(unitId);
+    } else {
+      toast('❌ ' + (created.error || 'فشل حفظ العرض'));
+    }
+  } catch (e) { toast('❌ فشل رفع الملف'); }
+}
+
+async function loadPresentationsList(unitId) {
+  const list = document.getElementById('pres-list');
+  if (!list) return;
+  if (!unitId) { list.innerHTML = ''; return; }
+  try {
+    const res = await api('/presentations/unit/' + unitId);
+    const items = res.data || [];
+    list.innerHTML = items.length
+      ? items.map(p => `
+          <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px;">
+            <span>📊 ${p.title}</span>
+            <div style="display:flex; gap:8px;">
+              <a href="${p.driveUrl}" target="_blank" class="btn btn-ghost btn-sm">فتح</a>
+              <button class="btn btn-danger btn-sm" onclick="deletePresentation('${p.id}', '${unitId}')">حذف</button>
+            </div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted);">لا توجد عروض تقديمية لهذا الكورس بعد</p>';
+  } catch (e) {}
+}
+
+async function deletePresentation(id, unitId) {
+  try {
+    await api('/presentations/' + id, { method: 'DELETE' });
+    toast('✅ تم الحذف');
+    loadPresentationsList(unitId);
+  } catch (e) {}
+}
+
+// Chat (admin side: thread list + one conversation)
+let adminChatPollTimer = null;
+async function loadChatPage() {
+  const params = new URLSearchParams(location.search);
+  const studentId = params.get('studentId');
+  await loadChatThreads();
+  if (studentId) openChatThread(studentId);
+  if (adminChatPollTimer) clearInterval(adminChatPollTimer);
+  adminChatPollTimer = setInterval(loadChatThreads, 10000);
+}
+
+async function loadChatThreads() {
+  const list = document.getElementById('chat-threads');
+  if (!list) return;
+  try {
+    const res = await api('/chat/threads');
+    const threads = res.data || [];
+    list.innerHTML = threads.length
+      ? threads.map(t => `
+          <div class="dash-nav-item" style="cursor:pointer;" onclick="openChatThread('${t.studentId}')">
+            <span>${t.unread > 0 ? '🔴' : '👤'}</span>
+            <div style="flex:1; overflow:hidden;">
+              <div style="font-weight:600;">${escapeHtmlAdmin(t.studentName)}</div>
+              <div style="color:var(--text-muted); font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtmlAdmin(t.lastMessage || '')}</div>
+            </div>
+          </div>
+        `).join('')
+      : '<p style="color:var(--text-muted); padding:12px;">لا توجد محادثات بعد</p>';
+  } catch (e) {}
+}
+
+let currentChatStudentId = null;
+async function openChatThread(studentId) {
+  currentChatStudentId = studentId;
+  const title = document.getElementById('chat-with-title');
+  try {
+    const students = (await api('/students')).students || [];
+    const student = students.find(s => s.id === studentId);
+    if (title) title.textContent = student ? ('💬 ' + student.name) : '💬 المحادثة';
+  } catch (e) {}
+  await refreshAdminChatMessages();
+}
+
+async function refreshAdminChatMessages() {
+  if (!currentChatStudentId) return;
+  const box = document.getElementById('chat-messages');
+  if (!box) return;
+  try {
+    const res = await api('/chat/' + currentChatStudentId);
+    const messages = res.data || [];
+    box.innerHTML = messages.length
+      ? messages.map(m => {
+          const fromAdmin = m.senderRole === 'admin';
+          return `
+            <div style="align-self:${fromAdmin ? 'flex-start' : 'flex-end'}; max-width:75%;">
+              <div style="background:${fromAdmin ? 'var(--accent)' : 'var(--bg)'}; color:${fromAdmin ? '#fff' : 'var(--text)'}; padding:10px 14px; border-radius:var(--radius-md); line-height:1.6;">
+                ${escapeHtmlAdmin(m.text)}
+              </div>
+            </div>
+          `;
+        }).join('')
+      : '<p style="color:var(--text-muted); text-align:center; padding:24px;">ابدأ المحادثة مع الطالب</p>';
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+
+async function sendAdminChatMessage() {
+  if (!currentChatStudentId) { toast('❌ اختر طالب أولاً'); return; }
   const input = document.getElementById('chat-input');
   const text = input?.value.trim();
   if (!text) return;
   input.value = '';
   try {
-    const res = await api('/chat/me', { method: 'POST', body: JSON.stringify({ text }) });
-    if (!res.ok) toast('❌ ' + (res.error || 'فشل إرسال الرسالة'));
-    await refreshChatMessages();
-    const box = document.getElementById('chat-messages');
-    if (box) box.scrollTop = box.scrollHeight;
+    await api('/chat/' + currentChatStudentId, { method: 'POST', body: JSON.stringify({ text }) });
+    await refreshAdminChatMessages();
+    loadChatThreads();
   } catch (e) {}
 }
 
-// ===== small helpers =====
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str == null ? '' : String(str);
-  return div.innerHTML;
+// Exams / Results
+let currentManageExamId = null;
+
+async function loadExamsPage() {
+  // Course dropdown + exam dropdown are independent reads — fire them
+  // together instead of waiting on one before starting the other.
+  const [unitsRes, examsRes] = await Promise.allSettled([
+    api('/units'),
+    api('/exams/admin/all')
+  ]);
+
+  if (unitsRes.status === 'fulfilled') {
+    const units = (unitsRes.value && unitsRes.value.data) || [];
+    const courseSelect = document.getElementById('manage-course-select');
+    if (courseSelect) {
+      courseSelect.innerHTML = '<option value="">اختر الكورس</option>' +
+        units.map(u => `<option value="${u.id}">${u.title}</option>`).join('');
+    }
+  }
+
+  if (examsRes.status === 'fulfilled') {
+    const exams = (examsRes.value && examsRes.value.data) || [];
+    const select = document.getElementById('exam-select');
+    if (select) {
+      select.innerHTML = '<option value="">جميع الامتحانات</option>' +
+        exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('');
+    }
+  }
+
+  loadExamResults();
 }
-function formatDate(iso) {
-  if (!iso) return '';
+
+async function loadUnitExams() {
+  const unitId = document.getElementById('manage-course-select')?.value;
+  const wrap = document.getElementById('unit-exams-list');
+  const addBtn = document.getElementById('add-exam-btn');
+  closeAddExamForm();
+  closeQuestionsPanel();
+  if (!unitId) { wrap.style.display = 'none'; addBtn.style.display = 'none'; return; }
+  addBtn.style.display = 'inline-block';
+  wrap.style.display = 'block';
+  wrap.innerHTML = '⏳ جاري التحميل...';
   try {
-    const d = new Date(iso);
-    return d.toLocaleString('ar-EG', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  } catch (e) { return ''; }
+    const res = await api('/exams/unit/' + unitId);
+    const exams = res && res.data ? res.data : [];
+    if (!exams.length) {
+      wrap.innerHTML = '<p style="color:var(--text-muted);">مفيش امتحانات في الكورس ده لسه.</p>';
+      return;
+    }
+    wrap.innerHTML = exams.map(e => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+        <div>
+          <span class="badge ${e.status === 'published' ? 'badge-ok' : 'badge-warn'}">${e.status === 'published' ? '✓ منشور' : (e.status === 'hidden' ? 'مخفي' : 'مسودة')}</span>
+          ${String(e.resultsPublished) === 'true' ? '<span class="badge badge-ok">🏆 النتائج ظاهرة</span>' : '<span class="badge badge-info">⏳ النتائج مخفية</span>'}
+          <strong style="margin-right:8px;">${escapeHtmlAdmin(e.title)}</strong>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="openQuestionsPanel('${e.id}', '${escapeHtmlAdmin(e.title)}')">❓ الأسئلة</button>
+          ${e.status === 'published'
+            ? `<button class="btn btn-secondary btn-sm" onclick="hideExam('${e.id}')">🙈 إخفاء</button>`
+            : `<button class="btn btn-primary btn-sm" onclick="publishExam('${e.id}')">🚀 نشر</button>`}
+          ${String(e.resultsPublished) !== 'true'
+            ? `<button class="btn btn-primary btn-sm" onclick="publishExamResults('${e.id}')">✅ اعتماد وإظهار النتائج</button>`
+            : ''}
+          <button class="btn btn-danger btn-sm" onclick="deleteExam('${e.id}')">🗑</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {}
 }
 
-// UI Helpers
-function switchTab(tab, id) {
-  tab.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  tab.classList.add('active');
-  const container = tab.closest('div').parentElement;
-  container.querySelectorAll('[id^="tab-"]').forEach(c => c.style.display = 'none');
-  const target = container.querySelector('#tab-' + id);
-  if (target) target.style.display = 'block';
+function openAddExamForm() { document.getElementById('exam-form-wrap').style.display = 'block'; }
+function closeAddExamForm() {
+  const wrap = document.getElementById('exam-form-wrap');
+  if (wrap) wrap.style.display = 'none';
+  ['exam-title'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
 }
 
-function toggleAcc(header) {
-  const item = header.closest('.accordion-item');
-  item.classList.toggle('open');
-  const arrow = header.querySelector('.meta span:last-child, span:last-child');
-  if (arrow) arrow.style.transform = item.classList.contains('open') ? 'rotate(180deg)' : 'rotate(0deg)';
+async function saveExam() {
+  const unitId = document.getElementById('manage-course-select')?.value;
+  const title = document.getElementById('exam-title')?.value.trim();
+  if (!unitId) { toast('❌ اختر الكورس الأول'); return; }
+  if (!title) { toast('❌ اكتب عنوان الامتحان'); return; }
+  try {
+    const res = await api('/exams', {
+      method: 'POST',
+      body: JSON.stringify({
+        unitId, title,
+        timerMinutes: parseInt(document.getElementById('exam-timer')?.value) || 0,
+        maxAttempts: parseInt(document.getElementById('exam-attempts')?.value) || 1,
+        passingScore: parseInt(document.getElementById('exam-passing')?.value) || 50,
+        shuffleQuestions: document.getElementById('exam-shuffle')?.checked || false,
+        negativeMarking: document.getElementById('exam-negative')?.checked || false
+      })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة الامتحان (مسودة — دوس نشر عشان يظهر للطلاب)');
+      closeAddExamForm();
+      loadUnitExams();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة الامتحان'));
+    }
+  } catch (e) {}
+}
+
+async function publishExam(id) {
+  try { const res = await api('/exams/' + id + '/publish', { method: 'POST' }); if (res?.ok) { toast('✅ الامتحان بقى منشور'); loadUnitExams(); } } catch (e) {}
+}
+async function hideExam(id) {
+  try { const res = await api('/exams/' + id + '/hide', { method: 'POST' }); if (res?.ok) { toast('✅ تم إخفاء الامتحان'); loadUnitExams(); } } catch (e) {}
+}
+async function publishExamResults(id) {
+  if (!confirm('هيتم حساب الترتيب واعتماد النتائج، وهتظهر للطلاب فورًا. متأكد؟')) return;
+  try {
+    const res = await api('/attempts/exam/' + id + '/publish-results', { method: 'POST' });
+    if (res?.ok) { toast('✅ اتعمد النتائج وبقت ظاهرة للطلاب'); loadUnitExams(); loadExamResults(); }
+    else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
+  } catch (e) {}
+}
+async function deleteExam(id) {
+  if (!confirm('حذف الامتحان هيمسح كل أسئلته كمان. متأكد؟')) return;
+  try { const res = await api('/exams/' + id, { method: 'DELETE' }); if (res?.ok) { toast('✅ تم حذف الامتحان'); loadUnitExams(); } } catch (e) {}
+}
+
+// ----- Questions -----
+function openQuestionsPanel(examId, examTitle) {
+  currentManageExamId = examId;
+  document.getElementById('questions-wrap').style.display = 'block';
+  document.getElementById('questions-exam-title').textContent = examTitle;
+  renderQuestionFields();
+  loadQuestions();
+  document.getElementById('questions-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeQuestionsPanel() {
+  currentManageExamId = null;
+  const wrap = document.getElementById('questions-wrap');
+  if (wrap) wrap.style.display = 'none';
+}
+
+async function loadQuestions() {
+  if (!currentManageExamId) return;
+  const list = document.getElementById('questions-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/questions/exam/' + currentManageExamId);
+    const questions = res && res.data ? res.data : [];
+    if (!questions.length) {
+      list.innerHTML = '<p style="color:var(--text-muted);">مفيش أسئلة لسه — ضيف أول سؤال تحت.</p>';
+      return;
+    }
+    const typeLabels = { mcq: 'اختيار من متعدد', truefalse: 'صح/غلط', multi: 'اختيار متعدد', fillblank: 'ملء فراغ', essay: 'مقالي', image: 'صورة', listening: 'استماع 🎧' };
+    list.innerHTML = questions.map((q, i) => `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md); margin-bottom:8px;">
+        <div>
+          <span class="badge badge-info">${typeLabels[q.type] || q.type}</span>
+          <span style="margin-right:8px; font-weight:600;">${i + 1}. ${escapeHtmlAdmin(q.text)}</span>
+          <div style="color:var(--text-muted); font-size:0.8rem; margin-top:4px;">${q.points || 1} درجة</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteQuestion('${q.id}')">🗑</button>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+// In-memory state for the option-rows editor (click the correct answer
+// instead of retyping it). Reset whenever the question type changes.
+let qOptionsState = [{ text: '', correct: true }, { text: '', correct: false }];
+let qFillAnswersState = [''];
+
+function renderQuestionFields() {
+  const type = document.getElementById('q-type')?.value;
+  const wrap = document.getElementById('q-dynamic-fields');
+  if (!wrap) return;
+  if (type === 'mcq' || type === 'multi' || type === 'listening') {
+    if (type !== 'multi') {
+      // single-answer types: only one row may be marked correct
+      const firstCorrectIdx = qOptionsState.findIndex((o) => o.correct);
+      qOptionsState = qOptionsState.map((o, i) => ({ ...o, correct: i === (firstCorrectIdx === -1 ? 0 : firstCorrectIdx) }));
+    }
+    wrap.innerHTML = `
+      ${type === 'listening' ? `
+        <div class="form-group">
+          <label>رابط الصوت (Audio URL)</label>
+          <input type="text" class="inp" id="q-audio-url" placeholder="https://...">
+        </div>` : ''}
+      <div class="form-group">
+        <label>الاختيارات — دوس على ${type === 'multi' ? 'المربعات' : 'الدائرة'} بجانب الإجابة الصح</label>
+        <div id="q-options-rows"></div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="addOptionRow()">+ إضافة اختيار</button>
+      </div>`;
+    renderOptionRows_(type);
+  } else if (type === 'truefalse') {
+    wrap.innerHTML = `
+      <div class="form-group">
+        <label>الإجابة الصحيحة</label>
+        <select class="inp" id="q-correct-tf" style="max-width:200px;">
+          <option value="true">صح</option>
+          <option value="false">غلط</option>
+        </select>
+      </div>`;
+  } else if (type === 'fillblank') {
+    wrap.innerHTML = `
+      <div class="form-group">
+        <label>الإجابات الصحيحة المقبولة (ممكن أكتر من إجابة)</label>
+        <div id="q-fill-rows"></div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="addFillAnswerRow()">+ إضافة إجابة مقبولة</button>
+      </div>`;
+    renderFillRows_();
+  } else {
+    wrap.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem;">السؤال المقالي بيتصحح يدوي — مفيش إجابة نموذجية تتحط هنا.</p>';
+  }
+}
+
+function renderOptionRows_(type) {
+  const rows = document.getElementById('q-options-rows');
+  if (!rows) return;
+  const inputType = type === 'multi' ? 'checkbox' : 'radio';
+  rows.innerHTML = qOptionsState.map((opt, i) => `
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <input type="${inputType}" ${type === 'multi' ? 'name="q-opt-correct-multi"' : 'name="q-opt-correct"'} ${opt.correct ? 'checked' : ''} onchange="setOptionCorrect(${i}, this.checked)" title="إجابة صحيحة">
+      <input type="text" class="inp" style="flex:1;" value="${escapeHtmlAdmin(opt.text)}" placeholder="اختيار ${i + 1}" oninput="setOptionText(${i}, this.value)">
+      <button type="button" class="btn btn-danger btn-sm" onclick="removeOptionRow(${i})" ${qOptionsState.length <= 2 ? 'disabled' : ''}>🗑</button>
+    </div>`).join('');
+}
+
+function addOptionRow() {
+  qOptionsState.push({ text: '', correct: false });
+  renderOptionRows_(document.getElementById('q-type')?.value);
+}
+function removeOptionRow(i) {
+  if (qOptionsState.length <= 2) return;
+  const wasCorrect = qOptionsState[i].correct;
+  qOptionsState.splice(i, 1);
+  if (wasCorrect && !qOptionsState.some((o) => o.correct)) qOptionsState[0].correct = true;
+  renderOptionRows_(document.getElementById('q-type')?.value);
+}
+function setOptionText(i, value) { if (qOptionsState[i]) qOptionsState[i].text = value; }
+function setOptionCorrect(i, checked) {
+  const type = document.getElementById('q-type')?.value;
+  if (type === 'multi') {
+    qOptionsState[i].correct = checked;
+  } else {
+    qOptionsState = qOptionsState.map((o, idx) => ({ ...o, correct: idx === i }));
+    renderOptionRows_(type);
+  }
+}
+
+function renderFillRows_() {
+  const rows = document.getElementById('q-fill-rows');
+  if (!rows) return;
+  rows.innerHTML = qFillAnswersState.map((val, i) => `
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <input type="text" class="inp" style="flex:1;" value="${escapeHtmlAdmin(val)}" placeholder="إجابة مقبولة ${i + 1}" oninput="setFillAnswer(${i}, this.value)">
+      <button type="button" class="btn btn-danger btn-sm" onclick="removeFillAnswerRow(${i})" ${qFillAnswersState.length <= 1 ? 'disabled' : ''}>🗑</button>
+    </div>`).join('');
+}
+function addFillAnswerRow() { qFillAnswersState.push(''); renderFillRows_(); }
+function removeFillAnswerRow(i) {
+  if (qFillAnswersState.length <= 1) return;
+  qFillAnswersState.splice(i, 1);
+  renderFillRows_();
+}
+function setFillAnswer(i, value) { qFillAnswersState[i] = value; }
+
+async function addQuestion() {
+  if (!currentManageExamId) return;
+  const type = document.getElementById('q-type')?.value;
+  const text = document.getElementById('q-text')?.value.trim();
+  const points = parseFloat(document.getElementById('q-points')?.value) || 1;
+  if (!text) { toast('❌ اكتب نص السؤال'); return; }
+
+  let options, correctAnswer, audioUrl;
+  if (type === 'mcq' || type === 'multi' || type === 'listening') {
+    const cleaned = qOptionsState.map((o) => ({ text: o.text.trim(), correct: o.correct })).filter((o) => o.text);
+    if (cleaned.length < 2) { toast('❌ اكتب اختيارين على الأقل'); return; }
+    const correctOnes = cleaned.filter((o) => o.correct).map((o) => o.text);
+    if (!correctOnes.length) { toast('❌ حدد الإجابة الصحيحة'); return; }
+    options = cleaned.map((o) => o.text);
+    correctAnswer = type === 'multi' ? correctOnes : correctOnes[0];
+    if (type === 'listening') {
+      audioUrl = document.getElementById('q-audio-url')?.value.trim();
+      if (!audioUrl) { toast('❌ حط رابط الصوت'); return; }
+    }
+  } else if (type === 'truefalse') {
+    correctAnswer = document.getElementById('q-correct-tf')?.value === 'true';
+  } else if (type === 'fillblank') {
+    const answers = qFillAnswersState.map((a) => a.trim()).filter(Boolean);
+    if (!answers.length) { toast('❌ اكتب إجابة صحيحة واحدة على الأقل'); return; }
+    correctAnswer = answers.length === 1 ? answers[0] : answers;
+  }
+
+  try {
+    const res = await api('/questions', {
+      method: 'POST',
+      body: JSON.stringify({ examId: currentManageExamId, type, text, options, correctAnswer, audioUrl, points })
+    });
+    if (res && res.ok) {
+      toast('✅ تم إضافة السؤال');
+      document.getElementById('q-text').value = '';
+      qOptionsState = [{ text: '', correct: true }, { text: '', correct: false }];
+      qFillAnswersState = [''];
+      renderQuestionFields();
+      loadQuestions();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل إضافة السؤال'));
+    }
+  } catch (e) {}
+}
+
+async function deleteQuestion(id) {
+  if (!confirm('متأكد إنك عايز تحذف السؤال ده؟')) return;
+  try {
+    const res = await api('/questions/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف السؤال'); loadQuestions(); }
+  } catch (e) {}
+}
+
+async function loadExamResults() {
+  const examId = document.getElementById('exam-select')?.value;
+  try {
+    const path = examId ? '/analytics/exam-results?examId=' + examId : '/analytics/exam-results';
+    const data = await api(path);
+
+    // Stats
+    if (data.avgScore != null) document.getElementById('exam-avg').textContent = data.avgScore + '%';
+    if (data.highestScore != null) document.getElementById('exam-highest').textContent = data.highestScore + '%';
+    if (data.lowestScore != null) document.getElementById('exam-lowest').textContent = data.lowestScore + '%';
+    if (data.attemptsCount != null) document.getElementById('exam-count').textContent = data.attemptsCount;
+
+    // Leaderboard
+    const lb = document.getElementById('exam-leaderboard');
+    if (lb && data.leaderboard) {
+      lb.innerHTML = '';
+      data.leaderboard.forEach((s, i) => {
+        const div = document.createElement('div');
+        div.className = 'leaderboard-item';
+        const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : 'rank-other';
+        div.innerHTML = `
+          <div class="leaderboard-rank ${rankClass}">${i + 1}</div>
+          <div style="flex:1;">
+            <div style="font-weight:600;">${escapeHtmlAdmin(s.name)}</div>
+            <div style="color:var(--text-muted); font-size:0.85rem;">${escapeHtmlAdmin(s.time || '')}</div>
+          </div>
+          <div style="font-weight:700; color:var(--accent-light);">${s.score}%</div>
+        `;
+        lb.appendChild(div);
+      });
+    }
+
+    // Results table
+    const tbody = document.getElementById('results-table');
+    if (tbody && data.results) {
+      if (!data.results.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted);">لا توجد نتائج</td></tr>';
+      } else {
+        tbody.innerHTML = data.results.map((r, i) => `
+          <tr>
+            <td style="font-weight:700;">#${i + 1}</td>
+            <td style="font-weight:600;">${escapeHtmlAdmin(r.name)}</td>
+            <td style="color:${r.score >= 50 ? 'var(--success)' : 'var(--danger)'}; font-weight:700;">${r.score}%</td>
+            <td style="color:var(--text-muted);">${r.time || '—'}</td>
+            <td style="color:var(--text-muted); font-size:0.85rem;">${r.date || '—'}</td>
+          </tr>
+        `).join('');
+      }
+    }
+  } catch (e) {}
+}
+
+async function changeAdminPassword() {
+  const currentPassword = document.getElementById('current-password')?.value;
+  const newPassword = document.getElementById('new-password')?.value;
+  const confirmPassword = document.getElementById('confirm-password')?.value;
+  if (!currentPassword || !newPassword) { toast('❌ املا كل الحقول'); return; }
+  if (newPassword.length < 8) { toast('❌ كلمة المرور الجديدة لازم تكون 8 حروف على الأقل'); return; }
+  if (newPassword !== confirmPassword) { toast('❌ كلمة المرور الجديدة مش متطابقة مع التأكيد'); return; }
+  try {
+    const res = await api('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    if (res && res.ok) {
+      toast('✅ تم تغيير كلمة المرور — سجل دخول تاني بيها');
+      ['current-password', 'new-password', 'confirm-password'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    } else {
+      toast('❌ ' + (res?.error || 'فشل تغيير كلمة المرور'));
+    }
+  } catch (e) {}
 }
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
   requireAuth();
   const path = location.pathname;
-  if (path.includes('login.html')) {
-    // Pre-fill the code when a student arrives via a QR-code deep link
-    // (login.html?code=XXXX) instead of typing it in by hand.
-    const qrCode = new URLSearchParams(location.search).get('code');
-    const codeInput = document.getElementById('login-code');
-    if (qrCode && codeInput) codeInput.value = qrCode;
-    return;
-  }
-  if (path.includes('index.html')) loadMyCourses();
-  if (path.includes('course.html')) loadCourse();
-  if (path.includes('exam.html')) loadExam();
-  if (path.includes('dashboard.html')) loadDashboard();
-  if (path.includes('video.html')) loadVideoPage();
-  if (path.includes('presentation.html')) loadPresentationPage();
+  if (path.includes('login.html')) return;
+  if (path.includes('index.html')) loadAdminDashboard();
+  if (path.includes('units.html')) loadUnitsPage();
+  if (path.includes('codes.html')) loadCodesPage();
+  if (path.includes('students.html')) loadStudentsPage();
+  if (path.includes('exams.html')) loadExamsPage();
+  if (path.includes('student-detail.html')) loadStudentDetailPage();
+  if (path.includes('presentations.html')) loadPresentationsPage();
   if (path.includes('chat.html')) loadChatPage();
 });
 
 // When the browser restores a page from its back/forward cache (e.g. the
-// student hits the back button), it shows the old DOM as-is without
-// re-running any of the code above — including the login check. That's
-// what made an expired/logged-out session look like it was still showing
-// "the old page". Forcing a fresh load re-runs requireAuth() and re-fetches
-// real data instead.
+// user hits the back button), it shows the old DOM as-is without re-running
+// any of the code above — including the login check. That's what made an
+// expired/logged-out session look like it was still showing "the old page".
+// Forcing a fresh load re-runs requireAuth() and re-fetches real data.
 window.addEventListener('pageshow', (e) => {
   if (e.persisted) location.reload();
 });
-
-window.onclick = e => {
-  if (e.target.id === 'submit-modal') closeModal();
-};
