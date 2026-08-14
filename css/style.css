@@ -1,24 +1,36 @@
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
 
+/* ============================================================
+   "دفتر وحبر" (Notebook & Ink) — a warm, low-glare study theme.
+   Built deliberately AWAY from the two AI-default looks: this is
+   not cream-paper-with-terracotta, and not near-black-with-neon.
+   Instead: a warm charcoal-brown (never pure black — easier on
+   the eyes for long sessions) with a honey-amber "highlighter"
+   accent and a muted ink-teal second accent. Amiri (a classical
+   Arabic Naskh serif) carries headings — a nod to exam paper and
+   handwritten notebooks — while IBM Plex Sans Arabic stays for
+   body text and UI, where clarity matters more than character.
+   Same tokens as the student site, kept in sync deliberately.
+   ============================================================ */
 :root {
-  --bg: #0a0a0f;
-  --bg-elevated: #111118;
-  --bg-card: #13131f;
-  --bg-glass: rgba(19, 19, 31, 0.7);
-  --border: rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.12);
-  --text: #f0f0f5;
-  --text-secondary: #8b8b9a;
-  --text-muted: #4a4a5a;
-  --accent: #6366f1;
-  --accent-light: #818cf8;
-  --accent-glow: rgba(99,102,241,0.25);
-  --accent-2: #06b6d4;
-  --accent-2-glow: rgba(6,182,212,0.2);
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
+  --bg: #16130f;
+  --bg-elevated: #1e1a14;
+  --bg-card: #221d16;
+  --bg-glass: rgba(34, 29, 22, 0.72);
+  --border: rgba(244, 228, 193, 0.08);
+  --border-hover: rgba(244, 228, 193, 0.18);
+  --text: #f3ead9;
+  --text-secondary: #b6a98e;
+  --text-muted: #6e6350;
+  --accent: #e0982f;
+  --accent-light: #f0b45c;
+  --accent-glow: rgba(224, 152, 47, 0.25);
+  --accent-2: #4f9d8f;
+  --accent-2-glow: rgba(79, 157, 143, 0.2);
+  --success: #6fae4e;
+  --warning: #e0982f;
+  --danger: #cf5d4c;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -28,29 +40,46 @@
   --shadow-lg: 0 8px 40px rgba(0,0,0,0.6);
   --shadow-glow: 0 0 40px var(--accent-glow);
   --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --font-display: 'Amiri', 'IBM Plex Sans Arabic', serif;
 }
 
 * { margin:0; padding:0; box-sizing:border-box; }
 html { scroll-behavior:smooth; }
 body {
   font-family: 'IBM Plex Sans Arabic', sans-serif;
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 1.5px 1.5px, rgba(244,228,193,0.05) 1px, transparent 0) 0 0/22px 22px,
+    var(--bg);
   color: var(--text);
   line-height: 1.7;
   min-height: 100vh;
   direction: rtl;
   -webkit-font-smoothing: antialiased;
 }
+h1, h2 { font-family: var(--font-display); }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--text-muted); border-radius: 3px; }
-::selection { background: var(--accent); color: white; }
+::selection { background: var(--accent); color: #1a1509; }
+
+/* Visible keyboard focus everywhere — never removed, only restyled */
+a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible,
+select:focus-visible, .btn:focus-visible, .opt:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim, .skel { animation: none !important; opacity: 1 !important; }
+  * { transition-duration: 0.01ms !important; }
+}
 
 .container { max-width: 1200px; margin:0 auto; padding: 0 24px; }
 .section { padding: 100px 0; }
 
 .text-gradient {
+  font-family: var(--font-display);
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -72,7 +101,7 @@ body {
   height: 72px;
   display: flex;
   align-items: center;
-  background: rgba(10,10,15,0.8);
+  background: rgba(22,19,15,0.82);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--border);
 }
@@ -155,7 +184,7 @@ body {
 }
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 30px var(--accent-glow), 0 0 0 1px rgba(255,255,255,0.1) inset;
+  box-shadow: 0 8px 30px var(--accent-glow), 0 0 0 1px rgba(244,228,193,0.12) inset;
 }
 .btn-secondary {
   background: var(--bg-elevated);
@@ -164,7 +193,7 @@ body {
 }
 .btn-secondary:hover {
   border-color: var(--border-hover);
-  background: rgba(255,255,255,0.03);
+  background: rgba(244,228,193,0.04);
   transform: translateY(-1px);
 }
 .btn-ghost {
@@ -240,17 +269,17 @@ body {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  background: linear-gradient(90deg, transparent, rgba(244,228,193,0.1), transparent);
 }
 .card:hover {
   border-color: var(--border-hover);
   transform: translateY(-6px);
-  box-shadow: var(--shadow-lg), 0 0 60px rgba(99,102,241,0.08);
+  box-shadow: var(--shadow-lg), 0 0 60px rgba(224,152,47,0.08);
 }
 .card-img {
   width: 100%;
   height: 200px;
-  background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 50%, #1a1a2e 100%);
+  background: linear-gradient(135deg, #241f17 0%, #17140f 50%, #241f17 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -268,7 +297,7 @@ body {
 .card-tag {
   display: inline-block;
   padding: 4px 12px;
-  background: rgba(99,102,241,0.1);
+  background: rgba(224,152,47,0.1);
   color: var(--accent-light);
   border-radius: 100px;
   font-size: 0.75rem;
@@ -308,8 +337,8 @@ body {
   transition: var(--transition);
 }
 .feature-card:hover {
-  border-color: rgba(99,102,241,0.3);
-  box-shadow: 0 0 40px rgba(99,102,241,0.06);
+  border-color: rgba(224,152,47,0.3);
+  box-shadow: 0 0 40px rgba(224,152,47,0.06);
 }
 .feature-icon {
   width: 48px; height: 48px;
@@ -366,7 +395,7 @@ body {
   transition: var(--transition);
   user-select: none;
 }
-.accordion-header:hover { background: rgba(255,255,255,0.02); }
+.accordion-header:hover { background: rgba(244,228,193,0.03); }
 .accordion-header h4 { font-size: 0.95rem; font-weight: 600; }
 .accordion-header .meta {
   display: flex;
@@ -432,9 +461,9 @@ body {
   cursor: pointer;
   transition: var(--transition);
 }
-.opt:hover { border-color: rgba(99,102,241,0.4); background: rgba(99,102,241,0.04); }
+.opt:hover { border-color: rgba(224,152,47,0.4); background: rgba(224,152,47,0.04); }
 .opt input[type="radio"] { width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0; }
-.opt.sel { border-color: var(--accent); background: rgba(99,102,241,0.08); }
+.opt.sel { border-color: var(--accent); background: rgba(224,152,47,0.08); }
 
 /* Auth */
 .auth-wrap {
@@ -466,7 +495,19 @@ body {
   z-index: 1;
 }
 .auth-card .logo { justify-content: center; margin-bottom: 36px; }
-.auth-card h2 { text-align: center; margin-bottom: 8px; font-size: 1.5rem; }
+.auth-card h2 {
+  text-align: center; margin-bottom: 20px; font-size: 1.6rem;
+  position: relative; padding-bottom: 16px;
+}
+/* Signature motif: a short two-tone "highlighter" stroke under the title —
+   the one deliberately handmade-feeling accent in an otherwise disciplined,
+   quiet layout. Pure CSS, no image asset. */
+.auth-card h2::after {
+  content: '';
+  position: absolute; bottom: 0; right: 50%; transform: translateX(50%);
+  width: 56px; height: 4px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
 .auth-card > p { text-align: center; color: var(--text-secondary); margin-bottom: 32px; font-size: 0.95rem; }
 .form-group { margin-bottom: 20px; }
 .form-group label {
@@ -513,7 +554,7 @@ body {
 .badge-ok { background: rgba(34,197,94,0.1); color: #4ade80; }
 .badge-warn { background: rgba(245,158,11,0.1); color: #fbbf24; }
 .badge-err { background: rgba(239,68,68,0.1); color: #f87171; }
-.badge-info { background: rgba(99,102,241,0.1); color: var(--accent-light); }
+.badge-info { background: rgba(224,152,47,0.1); color: var(--accent-light); }
 
 /* Progress */
 .prog { width: 100%; height: 6px; background: var(--bg-elevated); border-radius: 100px; overflow: hidden; }
@@ -541,7 +582,16 @@ body {
 
 /* Section header */
 .sec-head { text-align: center; margin-bottom: 64px; }
-.sec-head h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); margin-bottom: 12px; font-weight: 700; }
+.sec-head h2 {
+  font-size: clamp(1.8rem, 4vw, 2.6rem); margin-bottom: 20px; font-weight: 700;
+  position: relative; display: inline-block; padding-bottom: 18px;
+}
+.sec-head h2::after {
+  content: '';
+  position: absolute; bottom: 0; right: 50%; transform: translateX(50%);
+  width: 72px; height: 4px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
 .sec-head p { color: var(--text-secondary); font-size: 1.05rem; max-width: 520px; margin: 0 auto; line-height: 1.7; }
 
 /* Footer */
@@ -606,7 +656,7 @@ body {
   margin-bottom: 4px;
 }
 .dash-nav-item:hover, .dash-nav-item.active {
-  background: rgba(99,102,241,0.08);
+  background: rgba(224,152,47,0.08);
   color: var(--text);
 }
 .dash-nav-item.active { border-right: 2px solid var(--accent); }
@@ -641,7 +691,7 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-tr:hover td { background: rgba(255,255,255,0.02); }
+tr:hover td { background: rgba(244,228,193,0.03); }
 
 /* Leaderboard */
 .leaderboard-item {
