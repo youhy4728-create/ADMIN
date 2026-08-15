@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>تصدير الأكواد | MFX Admin</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
+  <style>
+    /* Ticket-style code card — dashed "torn edge" notch on both sides,
+       matching the notebook/ink identity used across the platform. */
+    .codes-export-toolbar {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 28px; padding: 16px 20px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+    }
+    .codes-export-toolbar .spacer { flex: 1; }
+    #codes-export-sheet {
+      background: var(--bg);
+      padding: 32px;
+      border-radius: var(--radius-lg);
+    }
+    .codes-export-header {
+      text-align: center; margin-bottom: 28px;
+    }
+    .codes-export-header h1 {
+      font-family: var(--font-display); font-size: 2rem;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .codes-export-header p { color: var(--text-secondary); margin-top: 6px; }
+    .ticket-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px;
+    }
+    .ticket {
+      position: relative;
+      background: linear-gradient(160deg, var(--bg-card) 0%, var(--bg-elevated) 100%);
+      border: 1px solid var(--border-hover);
+      border-radius: 18px;
+      padding: 22px;
+      display: flex; align-items: center; gap: 18px;
+      overflow: visible;
+      box-shadow: var(--shadow-md);
+    }
+    .ticket::before, .ticket::after {
+      content: ''; position: absolute; top: 50%; transform: translateY(-50%);
+      width: 22px; height: 22px; border-radius: 50%; background: var(--bg);
+      border: 1px solid var(--border-hover);
+    }
+    .ticket::before { right: -11px; }
+    .ticket::after { left: -11px; }
+    .ticket .divider {
+      position: absolute; top: 12px; bottom: 12px; right: 108px;
+      border-right: 2px dashed var(--border-hover);
+    }
+    .ticket-qr {
+      flex-shrink: 0; width: 92px; height: 92px; padding: 6px;
+      background: #fff; border-radius: 10px;
+    }
+    .ticket-qr canvas { width: 100% !important; height: 100% !important; display: block; }
+    .ticket-body { flex: 1; min-width: 0; padding-right: 18px; }
+    .ticket-unit { font-size: 0.72rem; color: var(--text-muted); margin-bottom: 4px; }
+    .ticket-code {
+      font-family: 'IBM Plex Sans Arabic', monospace; font-weight: 800;
+      font-size: 1.5rem; letter-spacing: 1px; color: var(--accent-light);
+      direction: ltr; text-align: right;
+    }
+    .ticket-link {
+      font-size: 0.72rem; color: var(--text-secondary); margin-top: 6px;
+      direction: ltr; text-align: right; word-break: break-all;
+    }
+    .codes-export-footer {
+      text-align: center; margin-top: 28px; color: var(--text-muted); font-size: 0.8rem;
+    }
+
+    @media print {
+      body * { visibility: hidden; }
+      .codes-export-toolbar { display: none !important; }
+      #codes-export-sheet, #codes-export-sheet * { visibility: visible; }
+      #codes-export-sheet { position: absolute; inset: 0; padding: 20px; background: #16130f; }
+      .ticket { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="dash-main" style="margin-right:0; padding:32px;">
+    <div class="codes-export-toolbar">
+      <a href="codes.html" class="btn btn-secondary" style="padding:8px 16px;">← رجوع للأكواد</a>
+      <div class="spacer"></div>
+      <button class="btn btn-secondary" onclick="downloadCodesAsImage()">📸 حفظ كصورة</button>
+      <button class="btn btn-primary" onclick="window.print()">🖨️ طباعة / PDF</button>
+    </div>
+
+    <div id="codes-export-sheet">
+      <div class="codes-export-header">
+        <h1 id="codes-export-title">أكواد الدخول</h1>
+        <p id="codes-export-subtitle">امسح الـQR أو ادخل الكود يدويًا في صفحة تسجيل الدخول</p>
+      </div>
+      <div class="ticket-grid" id="ticket-grid"></div>
+      <div class="codes-export-footer" id="codes-export-footer"></div>
+    </div>
+  </main>
+
+  <script src="js/app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      requireAuth();
+      renderCodesExportPage();
+    });
+  </script>
+</body>
+</html>

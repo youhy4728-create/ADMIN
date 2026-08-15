@@ -191,6 +191,7 @@ async function loadUnitsList() {
           <p>${escapeHtmlAdmin(u.description || 'بدون وصف')}</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm" onclick="openVideosPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🎥 الفيديوهات</button>
+            <button class="btn btn-secondary btn-sm" onclick="openVocabPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🔊 القاموس</button>
             ${u.status === 'published'
               ? `<button class="btn btn-secondary btn-sm" onclick="hideUnit('${u.id}')">🙈 إخفاء</button>`
               : `<button class="btn btn-primary btn-sm" onclick="publishUnit('${u.id}')">🚀 نشر</button>`}
@@ -276,6 +277,81 @@ function setVideoMode(mode) {
   document.getElementById('video-mode-link').style.display = mode === 'link' ? 'block' : 'none';
   document.getElementById('video-mode-upload-btn').className = 'btn btn-sm ' + (mode === 'upload' ? 'btn-primary' : 'btn-secondary');
   document.getElementById('video-mode-link-btn').className = 'btn btn-sm ' + (mode === 'link' ? 'btn-primary' : 'btn-secondary');
+}
+
+// Units / Courses — vocabulary (AI-read words, no audio files)
+let currentVocabUnitId = null;
+let currentVocabWords = [];
+
+async function openVocabPanel(unitId, unitTitle) {
+  currentVocabUnitId = unitId;
+  document.getElementById('vocab-wrap').style.display = 'block';
+  document.getElementById('vocab-unit-title').textContent = unitTitle;
+  document.getElementById('vocab-wrap').scrollIntoView({ behavior: 'smooth' });
+  await loadVocabForUnit();
+}
+function closeVocabPanel() {
+  currentVocabUnitId = null;
+  document.getElementById('vocab-wrap').style.display = 'none';
+}
+
+async function loadVocabForUnit() {
+  if (!currentVocabUnitId) return;
+  const list = document.getElementById('vocab-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/units/' + currentVocabUnitId);
+    currentVocabWords = (res && res.ok && Array.isArray(res.data.vocabulary)) ? res.data.vocabulary : [];
+    renderVocabList_();
+  } catch (e) { list.innerHTML = '❌ فشل التحميل'; }
+}
+
+function renderVocabList_() {
+  const list = document.getElementById('vocab-list');
+  if (!list) return;
+  if (!currentVocabWords.length) {
+    list.innerHTML = '<p style="color:var(--text-muted);">مفيش كلمات لسه — ضيف أول كلمة تحت.</p>';
+    return;
+  }
+  const langLabels = { 'en-US': 'EN-US', 'en-GB': 'EN-GB', 'ar-EG': 'عربي' };
+  list.innerHTML = currentVocabWords.map((w, i) => `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; background:var(--bg-elevated); border:1px solid var(--border); border-radius:var(--radius-md);">
+      <div>
+        <span style="font-weight:600;">${escapeHtmlAdmin(w.text)}</span>
+        <span class="badge badge-info" style="margin-right:8px;">${langLabels[w.lang] || w.lang}</span>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="speakText_(${JSON.stringify(w.text)}, '${w.lang}', ${w.rate || 1})">🔊 سمّعلي</button>
+        <button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="removeVocabWord(${i})">🗑</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function addVocabWord() {
+  const text = document.getElementById('vocab-text')?.value.trim();
+  if (!text) { toast('❌ اكتب الكلمة أو الجملة'); return; }
+  const lang = document.getElementById('vocab-lang')?.value;
+  const rate = parseFloat(document.getElementById('vocab-rate')?.value) || 1;
+  currentVocabWords.push({ text, lang, rate });
+  await saveVocabList_();
+  document.getElementById('vocab-text').value = '';
+}
+
+async function removeVocabWord(i) {
+  currentVocabWords.splice(i, 1);
+  await saveVocabList_();
+}
+
+async function saveVocabList_() {
+  renderVocabList_(); // update instantly — don't make the admin wait on the network to see their edit
+  try {
+    const res = await api('/units/' + currentVocabUnitId, {
+      method: 'PATCH',
+      body: JSON.stringify({ vocabulary: currentVocabWords })
+    });
+    if (!res || !res.ok) toast('❌ ' + ((res && res.error) || 'فشل الحفظ'));
+  } catch (e) {}
 }
 
 async function loadVideosForUnit() {
@@ -405,6 +481,8 @@ async function deleteVideo(id) {
 }
 
 // Codes
+let lastLoadedCodes = [];
+
 async function loadCodesPage() {
   loadCodesList();
 }
@@ -413,6 +491,7 @@ async function loadCodesList() {
   try {
     const res = await api('/codes');
     const codes = res && res.data ? res.data : [];
+    lastLoadedCodes = codes;
     const tbody = document.getElementById('codes-table');
     if (!tbody) return;
     if (!codes.length) {
@@ -444,10 +523,88 @@ async function generateCodes() {
     if (res && res.ok) {
       toast('✅ تم توليد الأكواد');
       loadCodesList();
+      // Hand the fresh batch straight to the export page (new tab) — one
+      // click ("توليد الأكواد") gets you both the updated table AND a
+      // ready-to-save/print sheet of exactly the codes you just made.
+      openCodesExportBatch(res.data || []);
     } else {
       toast('❌ ' + (res?.error || 'فشل توليد الأكواد'));
     }
   } catch (e) {}
+}
+
+// Stashes the batch (sessionStorage survives the new-tab navigation but
+// not much else — deliberately not persisted anywhere durable, these are
+// one-time login codes, not something that needs to live in a database
+// twice) and opens the export/print page in a new tab.
+function openCodesExportBatch(codes, title) {
+  if (!codes.length) return;
+  try {
+    sessionStorage.setItem('mfx_codes_export_batch', JSON.stringify({
+      codes, title: title || null, generatedAt: new Date().toISOString()
+    }));
+  } catch (e) {}
+  window.open('codes-export.html', '_blank');
+}
+
+function exportAllListedCodes() {
+  if (!lastLoadedCodes.length) { toast('❌ مفيش أكواد لعرضها'); return; }
+  openCodesExportBatch(lastLoadedCodes);
+}
+
+function renderCodesExportPage() {
+  let batch = null;
+  try { batch = JSON.parse(sessionStorage.getItem('mfx_codes_export_batch') || 'null'); } catch (e) {}
+  const codes = (batch && batch.codes) || [];
+  const grid = document.getElementById('ticket-grid');
+  const footer = document.getElementById('codes-export-footer');
+  const subtitle = document.getElementById('codes-export-subtitle');
+  if (!grid) return;
+
+  if (!codes.length) {
+    grid.innerHTML = '<p style="grid-column:1/-1; text-align:center; color:var(--text-muted);">مفيش أكواد لعرضها — ارجع لصفحة الأكواد وولّد دفعة جديدة.</p>';
+    return;
+  }
+
+  subtitle.textContent = `${codes.length} كود دخول جاهزين — ${STUDENT_SITE_URL.replace(/^https?:\/\//, '')}`;
+  footer.textContent = 'MFX Platform — ' + STUDENT_SITE_URL;
+
+  grid.innerHTML = codes.map((c, i) => `
+    <div class="ticket">
+      <div class="divider"></div>
+      <div class="ticket-qr"><canvas id="ticket-qr-${i}"></canvas></div>
+      <div class="ticket-body">
+        <div class="ticket-unit">${escapeHtmlAdmin(c.unitId ? 'كورس محدد' : 'كل الكورسات')}</div>
+        <div class="ticket-code">${escapeHtmlAdmin(c.code)}</div>
+        <div class="ticket-link">${escapeHtmlAdmin(STUDENT_SITE_URL.replace(/^https?:\/\//, ''))}</div>
+      </div>
+    </div>
+  `).join('');
+
+  if (typeof QRCode === 'undefined') { setTimeout(() => renderCodesExportPage(), 150); return; }
+  codes.forEach((c, i) => {
+    const canvas = document.getElementById('ticket-qr-' + i);
+    if (!canvas) return;
+    const link = STUDENT_SITE_URL + '/login.html?code=' + encodeURIComponent(c.code);
+    QRCode.toCanvas(canvas, link, { width: 160, margin: 1 }, () => {});
+  });
+}
+
+async function downloadCodesAsImage() {
+  if (typeof html2canvas === 'undefined') { toast('❌ مكتبة التصوير لسه بتحمّل، جرّب تاني بعد ثانية'); return; }
+  const sheet = document.getElementById('codes-export-sheet');
+  if (!sheet) return;
+  toast('⏳ جاري إنشاء الصورة...');
+  try {
+    const canvas = await html2canvas(sheet, { backgroundColor: '#16130f', scale: 2 });
+    const link = document.createElement('a');
+    link.download = 'mfx-codes-' + Date.now() + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    toast('✅ اتحمّلت الصورة');
+  } catch (e) {
+    toast('❌ فشل إنشاء الصورة');
+  }
 }
 
 async function deleteCode(id) {
@@ -563,9 +720,12 @@ async function loadStudentDetailPage() {
     const examsBox = document.getElementById('detail-exams');
     examsBox.innerHTML = (d.examActivity || []).length
       ? d.examActivity.map(e => `
-          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
-            <span>${e.examTitle}</span>
-            <span style="font-weight:700; color:${e.percentage >= 50 ? 'var(--success)' : 'var(--danger)'};">${e.percentage}%</span>
+          <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-md); padding:12px 16px; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <span>${escapeHtmlAdmin(e.examTitle)}</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="font-weight:700; color:${e.percentage >= 50 ? 'var(--success)' : 'var(--danger)'};">${e.percentage}%</span>
+              ${e.attemptId ? `<button class="btn btn-secondary" style="padding:4px 10px; font-size:0.78rem;" onclick="showAttemptReview('${e.attemptId}')">👁 الإجابات</button>` : ''}
+            </div>
           </div>
         `).join('')
       : '<p style="color:var(--text-muted);">لسه ما دخلش أي امتحان</p>';
@@ -580,6 +740,66 @@ async function loadStudentDetailPage() {
         `).join('')
       : '<p style="color:var(--text-muted);">لسه ماعملش أي تعليق</p>';
   } catch (e) { toast('❌ فشل تحميل بيانات الطالب'); }
+}
+
+async function showAttemptReview(attemptId) {
+  const modal = document.getElementById('review-modal');
+  const body = document.getElementById('review-modal-body');
+  const title = document.getElementById('review-modal-title');
+  if (!modal || !body) return;
+  modal.style.display = 'flex';
+  body.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/attempts/' + attemptId + '/review');
+    if (!res || !res.ok) { body.innerHTML = '❌ ' + ((res && res.error) || 'فشل تحميل المراجعة'); return; }
+    const { attempt, exam, questions } = res.data;
+    title.textContent = '📝 ' + (exam ? exam.title : 'مراجعة الإجابات') + ' — ' + Math.round(parseFloat(attempt.percentage) || 0) + '%';
+
+    const typeLabels = { mcq: 'اختيار من متعدد', truefalse: 'صح/غلط', multi: 'اختيار متعدد', fillblank: 'ملء فراغ', essay: 'مقالي', image: 'صورة', listening: 'استماع 🎧' };
+
+    body.innerHTML = questions.map((q, i) => {
+      const stateColor = q.correct === true ? 'var(--success)' : q.correct === false ? 'var(--danger)' : 'var(--text-muted)';
+      const stateLabel = q.correct === true ? '✓ صح' : q.correct === false ? '✗ غلط' : '⏳ يحتاج تصحيح يدوي';
+
+      let answerHtml;
+      if (q.type === 'mcq' || q.type === 'multi' || q.type === 'listening' || q.type === 'truefalse') {
+        const options = q.type === 'truefalse' ? ['true', 'false'] : (q.options || []);
+        const studentSet = new Set((Array.isArray(q.studentAnswer) ? q.studentAnswer : [q.studentAnswer]).map(String));
+        const correctSet = new Set((Array.isArray(q.correctAnswer) ? q.correctAnswer : [q.correctAnswer]).map(String));
+        answerHtml = options.map((opt) => {
+          const label = q.type === 'truefalse' ? (opt === 'true' ? 'صح' : 'غلط') : opt;
+          const isStudent = studentSet.has(String(opt));
+          const isCorrectOpt = correctSet.has(String(opt));
+          let style = 'border:1px solid var(--border); color:var(--text-secondary);';
+          if (isCorrectOpt) style = 'border:1px solid var(--success); color:var(--success); background:rgba(111,174,78,0.08);';
+          if (isStudent && !isCorrectOpt) style = 'border:1px solid var(--danger); color:var(--danger); background:rgba(207,93,76,0.08);';
+          const marker = isStudent ? (isCorrectOpt ? '✓ ' : '✗ ') : (isCorrectOpt ? '✓ ' : '');
+          return `<div style="padding:6px 12px; border-radius:8px; margin-bottom:4px; font-size:0.85rem; ${style}">${marker}${escapeHtmlAdmin(label)}${isStudent ? ' (إجابة الطالب)' : ''}</div>`;
+        }).join('');
+      } else if (q.type === 'fillblank') {
+        answerHtml = `
+          <div style="font-size:0.85rem; margin-bottom:4px;">إجابة الطالب: <strong style="color:${stateColor};">${escapeHtmlAdmin(q.studentAnswer || '—')}</strong></div>
+          <div style="font-size:0.8rem; color:var(--text-muted);">الإجابة الصحيحة: ${escapeHtmlAdmin(Array.isArray(q.correctAnswer) ? q.correctAnswer.join(' / ') : String(q.correctAnswer || ''))}</div>`;
+      } else {
+        answerHtml = `<div style="font-size:0.85rem; white-space:pre-wrap; background:var(--bg-elevated); padding:10px; border-radius:8px;">${escapeHtmlAdmin(q.studentAnswer || 'لسه ما جاوبش')}</div>`;
+      }
+
+      return `
+        <div style="background:var(--bg-elevated); border:1px solid var(--border); border-radius:var(--radius-md); padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:10px;">
+            <div><span class="badge badge-info">${typeLabels[q.type] || q.type}</span> <strong style="margin-right:6px;">${i + 1}. ${escapeHtmlAdmin(q.text)}</strong></div>
+            <span style="font-weight:700; color:${stateColor}; white-space:nowrap;">${stateLabel}</span>
+          </div>
+          ${answerHtml}
+        </div>`;
+    }).join('');
+  } catch (e) {
+    body.innerHTML = '❌ حصل خطأ أثناء التحميل';
+  }
+}
+function closeReviewModal() {
+  const modal = document.getElementById('review-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 // Presentations (PowerPoint) management
@@ -934,7 +1154,30 @@ function renderQuestionFields() {
     wrap.innerHTML = `
       ${type === 'listening' ? `
         <div class="form-group">
-          <label>رابط الصوت (Audio URL)</label>
+          <label>النص اللي الـAI هينطقه (الأسهل — من غير ملف صوت خالص)</label>
+          <textarea class="inp" id="q-tts-text" rows="2" placeholder="اكتب النص اللي عايز الطالب يسمعه"></textarea>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:8px;">
+          <div class="form-group" style="margin:0;">
+            <label>اللغة</label>
+            <select class="inp" id="q-tts-lang">
+              <option value="en-US">إنجليزي (أمريكي)</option>
+              <option value="en-GB">إنجليزي (بريطاني)</option>
+              <option value="ar-EG">عربي</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label>سرعة النطق الافتراضية</label>
+            <select class="inp" id="q-tts-rate">
+              <option value="0.7">أبطأ</option>
+              <option value="1" selected>عادي</option>
+              <option value="1.3">أسرع</option>
+            </select>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:12px;" onclick="previewQuestionTts_()">🔊 سمّعلي</button>
+        <div class="form-group">
+          <label>أو رابط ملف صوت جاهز (اختياري، لو مش هتستخدم النطق الآلي)</label>
           <input type="text" class="inp" id="q-audio-url" placeholder="https://...">
         </div>` : ''}
       <div class="form-group">
@@ -1016,6 +1259,25 @@ function removeFillAnswerRow(i) {
 }
 function setFillAnswer(i, value) { qFillAnswersState[i] = value; }
 
+// Shared TTS helper — used to preview a question's listening text here,
+// and reused as-is by the vocabulary manager below. Same browser API the
+// student side uses to actually play it during the exam.
+function speakText_(text, lang, rate, onEnd) {
+  if (!text) return;
+  if (!('speechSynthesis' in window)) { toast('❌ متصفحك مش بيدعم النطق الصوتي'); return; }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = lang || 'en-US';
+  utter.rate = parseFloat(rate) || 1;
+  if (onEnd) { utter.onend = onEnd; utter.onerror = onEnd; }
+  window.speechSynthesis.speak(utter);
+}
+function previewQuestionTts_() {
+  const text = document.getElementById('q-tts-text')?.value.trim();
+  if (!text) { toast('❌ اكتب النص الأول'); return; }
+  speakText_(text, document.getElementById('q-tts-lang')?.value, document.getElementById('q-tts-rate')?.value);
+}
+
 async function addQuestion() {
   if (!currentManageExamId) return;
   const type = document.getElementById('q-type')?.value;
@@ -1023,7 +1285,7 @@ async function addQuestion() {
   const points = parseFloat(document.getElementById('q-points')?.value) || 1;
   if (!text) { toast('❌ اكتب نص السؤال'); return; }
 
-  let options, correctAnswer, audioUrl;
+  let options, correctAnswer, audioUrl, ttsText, ttsLang, ttsRate;
   if (type === 'mcq' || type === 'multi' || type === 'listening') {
     const cleaned = qOptionsState.map((o) => ({ text: o.text.trim(), correct: o.correct })).filter((o) => o.text);
     if (cleaned.length < 2) { toast('❌ اكتب اختيارين على الأقل'); return; }
@@ -1032,8 +1294,11 @@ async function addQuestion() {
     options = cleaned.map((o) => o.text);
     correctAnswer = type === 'multi' ? correctOnes : correctOnes[0];
     if (type === 'listening') {
+      ttsText = document.getElementById('q-tts-text')?.value.trim();
+      ttsLang = document.getElementById('q-tts-lang')?.value;
+      ttsRate = document.getElementById('q-tts-rate')?.value;
       audioUrl = document.getElementById('q-audio-url')?.value.trim();
-      if (!audioUrl) { toast('❌ حط رابط الصوت'); return; }
+      if (!ttsText && !audioUrl) { toast('❌ اكتب نص للنطق الآلي أو حط رابط صوت'); return; }
     }
   } else if (type === 'truefalse') {
     correctAnswer = document.getElementById('q-correct-tf')?.value === 'true';
@@ -1046,7 +1311,7 @@ async function addQuestion() {
   try {
     const res = await api('/questions', {
       method: 'POST',
-      body: JSON.stringify({ examId: currentManageExamId, type, text, options, correctAnswer, audioUrl, points })
+      body: JSON.stringify({ examId: currentManageExamId, type, text, options, correctAnswer, audioUrl, ttsText, ttsLang, ttsRate, points })
     });
     if (res && res.ok) {
       toast('✅ تم إضافة السؤال');
