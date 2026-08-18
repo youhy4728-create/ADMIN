@@ -321,7 +321,7 @@ function renderVocabList_() {
         <span class="badge badge-info" style="margin-right:8px;">${langLabels[w.lang] || w.lang}</span>
       </div>
       <div style="display:flex; gap:6px;">
-        <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="speakText_(${JSON.stringify(w.text)}, '${w.lang}', ${w.rate || 1})">🔊 سمّعلي</button>
+        <button class="btn btn-secondary" style="padding:4px 10px; font-size:0.8rem;" onclick="speakCurrentVocabWord_(${i})">🔊 سمّعلي</button>
         <button class="btn btn-danger" style="padding:4px 10px; font-size:0.8rem;" onclick="removeVocabWord(${i})">🗑</button>
       </div>
     </div>
@@ -1026,8 +1026,9 @@ async function loadUnitExams() {
             ? `<button class="btn btn-secondary btn-sm" onclick="hideExam('${e.id}')">🙈 إخفاء</button>`
             : `<button class="btn btn-primary btn-sm" onclick="publishExam('${e.id}')">🚀 نشر</button>`}
           ${String(e.resultsPublished) !== 'true'
-            ? `<button class="btn btn-primary btn-sm" onclick="publishExamResults('${e.id}')">✅ اعتماد وإظهار النتائج</button>`
+            ? `<button class="btn btn-primary btn-sm" onclick="publishExamResults(this, '${e.id}')">✅ اعتماد وإظهار النتائج</button>`
             : ''}
+          <button class="btn btn-secondary btn-sm" onclick="openCertificatesPage('${e.id}')">🎓 الشهادات</button>
           <button class="btn btn-danger btn-sm" onclick="deleteExam('${e.id}')">🗑</button>
         </div>
       </div>
@@ -1079,14 +1080,24 @@ async function hideExam(id) {
     try { const res = await api('/exams/' + id + '/hide', { method: 'POST' }); if (res?.ok) { toast('✅ تم إخفاء الامتحان'); loadUnitExams(); } } catch (e) {}
   });
 }
-async function publishExamResults(id) {
+async function publishExamResults(btn, id) {
   if (!confirm('هيتم حساب الترتيب واعتماد النتائج، وهتظهر للطلاب فورًا. متأكد؟')) return;
-  await withRequestLock('publish-results:' + id, async () => {
-    try {
-      const res = await api('/attempts/exam/' + id + '/publish-results', { method: 'POST' });
-      if (res?.ok) { toast('✅ اتعمد النتائج وبقت ظاهرة للطلاب'); loadUnitExams(); loadExamResults(); }
-      else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
-    } catch (e) {}
+  // This does several sequential Google Sheets operations (rebuild
+  // rankings, then flip resultsPublished) — genuinely takes a few
+  // seconds. The button used to give ZERO feedback while that happened,
+  // which looked exactly like "not working" even when it was fine —
+  // found this during a bug report. Now it shows a spinner the whole
+  // time, same pattern as every other button in the app.
+  await withButtonLock(btn, 'جاري الاعتماد...', async () => {
+    await withRequestLock('publish-results:' + id, async () => {
+      try {
+        const res = await api('/attempts/exam/' + id + '/publish-results', { method: 'POST' });
+        if (res?.ok) { toast('✅ اتعمد النتائج وبقت ظاهرة للطلاب'); loadUnitExams(); loadExamResults(); }
+        else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
+      } catch (e) {
+        toast('❌ حصل خطأ أثناء الاعتماد — جرّب تاني');
+      }
+    });
   });
 }
 async function deleteExam(id) {
@@ -1277,6 +1288,16 @@ function previewQuestionTts_() {
   if (!text) { toast('❌ اكتب النص الأول'); return; }
   speakText_(text, document.getElementById('q-tts-lang')?.value, document.getElementById('q-tts-rate')?.value);
 }
+// Same fix as playVocabWord_ on the student side: only pass a plain
+// integer index through the onclick attribute and look the real word up
+// from currentVocabWords, instead of round-tripping arbitrary text
+// through JSON.stringify inside an HTML attribute (which broke this
+// button for every single word — see the note on the student side).
+function speakCurrentVocabWord_(i) {
+  const word = currentVocabWords[i];
+  if (!word) return;
+  speakText_(word.text, word.lang, word.rate || 1);
+}
 
 async function addQuestion() {
   if (!currentManageExamId) return;
@@ -1413,7 +1434,7 @@ function showPageLoader() {
   if (document.querySelector('.mfx-page-loader')) return;
   const el = document.createElement('div');
   el.className = 'mfx-page-loader';
-  el.innerHTML = '<div class="mfx-page-loader-ring"></div>';
+  el.innerHTML = '<div class="mfx-page-loader-content"><div class="mfx-page-loader-ring"></div><div class="mfx-page-loader-credit">صنع بواسطة يوسف ماهر</div></div>';
   document.body.appendChild(el);
 }
 function hidePageLoader() {
@@ -1453,3 +1474,89 @@ document.addEventListener('DOMContentLoaded', () => {
 window.addEventListener('pageshow', (e) => {
   if (e.persisted) location.reload();
 });
+
+// Certificates — one elegant English certificate per student for a
+// specific exam, printable/exportable. Opened in a new tab from an
+// exam's action row, same pattern as the codes export page.
+let currentCertificates = [];
+let currentCertExamTitle = '';
+
+function openCertificatesPage(examId) {
+  try { sessionStorage.setItem('mfx_cert_exam_id', examId); } catch (e) {}
+  window.open('certificates.html', '_blank');
+}
+
+async function loadCertificatesPage() {
+  const examId = sessionStorage.getItem('mfx_cert_exam_id');
+  const list = document.getElementById('cert-list');
+  if (!examId || !list) { if (list) list.innerHTML = '<p style="text-align:center; color:var(--text-muted);">افتح الصفحة دي من زرار "🎓 الشهادات" جنب امتحان معين.</p>'; return; }
+
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/attempts/exam/' + examId + '/certificates');
+    if (!res || !res.ok) { list.innerHTML = '❌ ' + ((res && res.error) || 'فشل التحميل'); return; }
+    const { exam, certificates } = res.data;
+    currentCertificates = certificates;
+    currentCertExamTitle = exam.title;
+    document.getElementById('cert-exam-title').textContent = exam.title;
+
+    if (!certificates.length) {
+      list.innerHTML = '<p style="text-align:center; color:var(--text-muted);">مفيش طلاب خلّصوا الامتحان ده لسه.</p>';
+      return;
+    }
+
+    list.innerHTML = certificates.map((c, i) => renderCertificateBlock_(c, exam.title, i)).join('');
+  } catch (e) {
+    list.innerHTML = '❌ حصل خطأ أثناء التحميل';
+  }
+}
+
+function renderCertificateBlock_(c, examTitle, i) {
+  const date = c.finishTime ? new Date(c.finishTime).toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+  return `
+    <div class="cert-block">
+      <div class="certificate" id="certificate-${i}" dir="ltr">
+        <div class="certificate-inner">
+          <div class="cert-corner-br"></div><div class="cert-corner-bl"></div>
+          <div class="cert-seal">🎓</div>
+          <div class="cert-kicker">Mr. Mamdouh — MFX Platform</div>
+          <div class="cert-title">Certificate of ${c.passed ? 'Achievement' : 'Completion'}</div>
+          <div class="cert-line1">This certificate is proudly presented to</div>
+          <div class="cert-name">${escapeHtmlAdmin(c.studentName)}</div>
+          <div class="cert-line2">for successfully completing the exam</div>
+          <div class="cert-line2 cert-exam-title">"${escapeHtmlAdmin(examTitle)}"</div>
+          <div class="cert-score">Score: ${c.percentage}%</div>
+          <div class="cert-footer">
+            <div class="col"><div class="line"></div><div class="label">Date</div><div class="value">${date}</div></div>
+            <div class="col"><div class="line"></div><div class="label">Instructor</div><div class="value">Mr. Mamdouh</div></div>
+          </div>
+          <div class="cert-credit">Made by Yousef Maher</div>
+        </div>
+      </div>
+      <div class="cert-actions">
+        <button class="btn btn-secondary" style="padding:6px 16px; font-size:0.85rem;" onclick="downloadCertificateAsImage_(${i})">📸 حفظ شهادة ${escapeHtmlAdmin(c.studentName)} كصورة</button>
+      </div>
+    </div>`;
+}
+
+// Index-only in the onclick, same fix pattern as the vocabulary buttons —
+// the student's name is read from currentCertificates, never round-tripped
+// through JSON.stringify inside an HTML attribute (that exact pattern is
+// what broke the vocabulary play button earlier — not repeating it here).
+async function downloadCertificateAsImage_(i) {
+  if (typeof html2canvas === 'undefined') { toast('❌ مكتبة التصوير لسه بتحمّل، جرّب تاني بعد ثانية'); return; }
+  const el = document.getElementById('certificate-' + i);
+  const c = currentCertificates[i];
+  if (!el) return;
+  toast('⏳ جاري إنشاء الصورة...');
+  try {
+    const canvas = await html2canvas(el, { backgroundColor: '#fbf6ea', scale: 2 });
+    const link = document.createElement('a');
+    link.download = 'certificate-' + ((c && c.studentName) || 'student').replace(/\s+/g, '-') + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    toast('✅ اتحمّلت الشهادة');
+  } catch (e) {
+    toast('❌ فشل إنشاء الصورة');
+  }
+}

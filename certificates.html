@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الشهادات | MFX Admin</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Playfair Display: a formal English serif, used ONLY inside the
+       certificate itself — the certificates are English-language
+       documents by request, kept visually separate from the site's own
+       Amiri/IBM Plex Arabic identity. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;900&family=Great+Vibes&display=swap">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
+  <style>
+    .cert-toolbar {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 28px; padding: 16px 20px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+    }
+    .cert-toolbar .spacer { flex: 1; }
+
+    /* ===== The certificate itself — English, formal, self-contained ===== */
+    .certificate {
+      position: relative;
+      width: 100%; max-width: 900px; aspect-ratio: 1.414 / 1; margin: 0 auto 40px;
+      background: linear-gradient(160deg, #fbf6ea 0%, #f4ecd8 100%);
+      color: #2b2213;
+      padding: 18px;
+      border-radius: 6px;
+      box-shadow: var(--shadow-lg);
+      break-inside: avoid;
+    }
+    .certificate-inner {
+      position: relative;
+      height: 100%; width: 100%;
+      border: 2px solid #a9782f;
+      outline: 1px solid #a9782f; outline-offset: -8px;
+      border-radius: 4px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 5% 8%;
+      text-align: center;
+      font-family: 'Playfair Display', Georgia, serif;
+    }
+    /* Corner flourishes — pure CSS, no image asset */
+    .certificate-inner::before, .certificate-inner::after,
+    .cert-corner-br, .cert-corner-bl {
+      content: ''; position: absolute; width: 34px; height: 34px;
+      border: 3px solid #a9782f;
+    }
+    .certificate-inner::before { top: 10px; right: 10px; border-left: none; border-bottom: none; }
+    .certificate-inner::after { top: 10px; left: 10px; border-right: none; border-bottom: none; }
+    .cert-corner-br { bottom: 10px; right: 10px; border-left: none; border-top: none; }
+    .cert-corner-bl { bottom: 10px; left: 10px; border-right: none; border-top: none; }
+
+    .cert-seal {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.6rem; margin-bottom: 14px;
+      box-shadow: 0 4px 14px rgba(224,152,47,0.4);
+    }
+    .cert-kicker { letter-spacing: 4px; font-size: 0.75rem; font-weight: 700; color: #a9782f; text-transform: uppercase; margin-bottom: 6px; }
+    .cert-title { font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 900; color: #2b2213; margin-bottom: 18px; }
+    .cert-line1 { font-size: 1rem; color: #6b5a35; margin-bottom: 6px; }
+    .cert-name { font-family: 'Great Vibes', cursive; font-size: clamp(2.2rem, 6vw, 3.4rem); color: #7a4f14; margin: 6px 0 16px; line-height: 1; }
+    .cert-line2 { font-size: 1rem; color: #6b5a35; max-width: 520px; line-height: 1.7; margin-bottom: 4px; }
+    .cert-exam-title { font-weight: 700; color: #2b2213; }
+    .cert-score { display: inline-block; margin-top: 10px; padding: 6px 22px; border: 1.5px solid #a9782f; border-radius: 100px; font-weight: 700; letter-spacing: 1px; color: #7a4f14; }
+    .cert-footer { display: flex; justify-content: space-between; align-items: flex-end; width: 100%; margin-top: 34px; padding: 0 4%; }
+    .cert-footer .col { text-align: center; }
+    .cert-footer .line { width: 140px; border-top: 1.5px solid #a9782f; margin-bottom: 6px; }
+    .cert-footer .label { font-size: 0.7rem; letter-spacing: 1.5px; text-transform: uppercase; color: #6b5a35; }
+    .cert-footer .value { font-size: 0.85rem; color: #2b2213; font-weight: 600; }
+    .cert-credit {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 0.85rem; font-weight: 700; letter-spacing: 1.5px; color: #7a4f14;
+    }
+
+    .cert-actions { text-align: center; margin-bottom: 16px; }
+
+    @media print {
+      body * { visibility: hidden; }
+      .cert-toolbar { display: none !important; }
+      #cert-list, #cert-list * { visibility: visible; }
+      #cert-list { position: absolute; inset: 0; padding: 0; }
+      .cert-block { page-break-after: always; padding-top: 24px; }
+      .cert-actions { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="dash-main" style="margin-right:0; padding:32px;">
+    <div class="cert-toolbar">
+      <a href="exams.html" class="btn btn-secondary" style="padding:8px 16px;">← رجوع للامتحانات</a>
+      <div class="spacer"></div>
+      <span id="cert-exam-title" style="font-weight:600;"></span>
+      <button class="btn btn-primary" onclick="window.print()">🖨️ طباعة الكل / PDF</button>
+    </div>
+
+    <div id="cert-list"></div>
+  </main>
+
+  <script src="js/app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      requireAuth();
+      loadCertificatesPage();
+    });
+  </script>
+</body>
+</html>
