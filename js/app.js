@@ -1027,7 +1027,7 @@ async function loadUnitExams() {
             : `<button class="btn btn-primary btn-sm" onclick="publishExam('${e.id}')">🚀 نشر</button>`}
           ${String(e.resultsPublished) !== 'true'
             ? `<button class="btn btn-primary btn-sm" onclick="publishExamResults(this, '${e.id}')">✅ اعتماد وإظهار النتائج</button>`
-            : ''}
+            : `<button class="btn btn-secondary btn-sm" onclick="unpublishExamResults(this, '${e.id}')">↩️ إلغاء الاعتماد</button>`}
           <button class="btn btn-secondary btn-sm" onclick="openCertificatesPage('${e.id}')">🎓 الشهادات</button>
           <button class="btn btn-danger btn-sm" onclick="deleteExam('${e.id}')">🗑</button>
         </div>
@@ -1096,6 +1096,23 @@ async function publishExamResults(btn, id) {
         else toast('❌ ' + (res?.error || 'فشل اعتماد النتائج'));
       } catch (e) {
         toast('❌ حصل خطأ أثناء الاعتماد — جرّب تاني');
+      }
+    });
+  });
+}
+// Pulls a published result back out of student view — e.g. published too
+// early, or a grading mistake needs fixing first. Nothing about the
+// attempts/scores themselves changes, only whether students can see them.
+async function unpublishExamResults(btn, id) {
+  if (!confirm('النتيجة هتتخفي عن الطلاب تاني لحد ما تعتمدها من الأول. متأكد؟')) return;
+  await withButtonLock(btn, 'جاري الإلغاء...', async () => {
+    await withRequestLock('unpublish-results:' + id, async () => {
+      try {
+        const res = await api('/attempts/exam/' + id + '/unpublish-results', { method: 'POST' });
+        if (res?.ok) { toast('↩️ اتلغى الاعتماد، النتيجة مخفية عن الطلاب دلوقتي'); loadUnitExams(); loadExamResults(); }
+        else toast('❌ ' + (res?.error || 'فشل إلغاء الاعتماد'));
+      } catch (e) {
+        toast('❌ حصل خطأ — جرّب تاني');
       }
     });
   });
@@ -1558,5 +1575,106 @@ async function downloadCertificateAsImage_(i) {
     toast('✅ اتحمّلت الشهادة');
   } catch (e) {
     toast('❌ فشل إنشاء الصورة');
+  }
+}
+
+// AI-assisted bulk question import — give the admin a copy-paste prompt
+// that makes any general-purpose AI output questions in exactly the
+// shape our backend expects, then paste the AI's answer back and create
+// them all in one Sheets write via POST /questions/bulk (real speed —
+// one write regardless of how many questions, same principle as the
+// submission queue's batching).
+const AI_IMPORT_PROMPT = `You are helping create exam questions for an online learning platform. I will give you a topic or source text below. Generate exam questions and output ONLY valid JSON — no markdown code fences, no explanation before or after — in EXACTLY this shape:
+
+{
+  "questions": [
+    { "type": "mcq", "text": "Question text", "options": ["A", "B", "C", "D"], "correctAnswer": "A", "points": 1 },
+    { "type": "truefalse", "text": "Statement to judge", "correctAnswer": true, "points": 1 },
+    { "type": "multi", "text": "Select all that apply", "options": ["A", "B", "C", "D"], "correctAnswer": ["A", "C"], "points": 2 },
+    { "type": "fillblank", "text": "Complete: The capital of Egypt is ____", "correctAnswer": "Cairo", "points": 1 },
+    { "type": "listening", "text": "Listen and choose the correct meaning", "options": ["A", "B", "C"], "correctAnswer": "A", "ttsText": "The exact sentence to be read aloud", "ttsLang": "en-US", "points": 1 },
+    { "type": "essay", "text": "Open-ended question, graded manually", "points": 5 }
+  ]
+}
+
+Rules:
+- "type" must be exactly one of: mcq, truefalse, multi, fillblank, listening, essay.
+- For mcq/multi/listening: "options" needs at least 2 items, and "correctAnswer" must match one of the option strings EXACTLY (character for character) — or, for "multi", an array of some of them.
+- For truefalse: "correctAnswer" is the JSON boolean true or false, not a string.
+- For fillblank: "correctAnswer" is the exact expected text.
+- For listening: include "ttsText" (what the AI voice should read aloud) and "ttsLang" (one of "en-US", "en-GB", "ar-EG").
+- For essay: no "correctAnswer" needed.
+- Output ONLY the JSON object above — nothing else, no \`\`\`json fences, no commentary.
+
+Topic / source material for the questions:
+[PASTE YOUR TOPIC OR TEXT HERE]
+
+Number of questions: [e.g. 10]`;
+
+function openAiImportModal() {
+  document.getElementById('ai-import-modal').style.display = 'flex';
+  document.getElementById('ai-prompt-text').value = AI_IMPORT_PROMPT;
+  document.getElementById('ai-import-response').value = '';
+  document.getElementById('ai-import-status').textContent = '';
+}
+function closeAiImportModal() {
+  document.getElementById('ai-import-modal').style.display = 'none';
+}
+async function copyAiPrompt() {
+  try {
+    await navigator.clipboard.writeText(AI_IMPORT_PROMPT);
+    toast('✅ اتنسخ البرومبت');
+  } catch (e) {
+    // Clipboard API can be blocked (permissions, non-HTTPS) — select the
+    // text so the admin can still copy it manually with Ctrl+C.
+    const el = document.getElementById('ai-prompt-text');
+    el.select();
+    toast('📋 حدّدت البرومبت — اعمل Ctrl+C');
+  }
+}
+
+// Strips a ```json ... ``` fence if the AI added one anyway despite the
+// prompt saying not to — cheap defensive parsing, not a hard requirement.
+function stripCodeFence_(text) {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  return fenced ? fenced[1] : trimmed;
+}
+
+async function submitAiImport() {
+  const status = document.getElementById('ai-import-status');
+  const raw = document.getElementById('ai-import-response').value;
+  if (!raw.trim()) { status.textContent = '❌ الصق رد الـAI الأول'; return; }
+  if (!currentManageExamId) { status.textContent = '❌ افتح الأسئلة بتاعة امتحان الأول'; return; }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stripCodeFence_(raw));
+  } catch (e) {
+    status.textContent = '❌ الرد مش JSON صحيح — تأكد إنك نسخت رد الـAI كله من غير ما تعدّل فيه';
+    return;
+  }
+  const questions = parsed.questions;
+  if (!Array.isArray(questions) || !questions.length) {
+    status.textContent = '❌ مفيش "questions" في الرد — تأكد إن الـAI اتبع الفورمات المطلوب';
+    return;
+  }
+
+  status.textContent = '⏳ جاري استيراد ' + questions.length + ' سؤال...';
+  try {
+    const res = await api('/questions/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ examId: currentManageExamId, questions })
+    });
+    if (res && res.ok) {
+      status.textContent = '✅ اتضاف ' + res.data.length + ' سؤال بنجاح';
+      toast('✅ اتضافوا ' + res.data.length + ' سؤال');
+      loadQuestions();
+      setTimeout(closeAiImportModal, 1200);
+    } else {
+      status.textContent = '❌ ' + ((res && res.error) || 'فشل الاستيراد');
+    }
+  } catch (e) {
+    status.textContent = '❌ حصل خطأ أثناء الاستيراد';
   }
 }
