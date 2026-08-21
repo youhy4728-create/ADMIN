@@ -56,6 +56,34 @@
       <div class="skel" style="height:180px;"></div>
     </div>
 
+    <div id="lessons-wrap" style="display:none; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:32px; margin-top:32px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h2 style="font-size:1.2rem;">📖 دروس: <span id="lessons-unit-title"></span></h2>
+        <button class="btn btn-secondary btn-sm" onclick="closeLessonsPanel()">✕ إغلاق</button>
+      </div>
+      <p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:20px;">
+        قسّم الكورس لدروس، كل درس ليه عنوان ونص شرح (اختياري)، وبعدين اربط الفيديوهات/العروض بيه من قايمة "🎥 الفيديوهات" و"📊 العروض".
+      </p>
+
+      <div id="lessons-list" style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;"></div>
+
+      <div style="border-top:1px solid var(--border); padding-top:20px;">
+        <input type="hidden" id="lesson-edit-id" value="">
+        <div class="form-group">
+          <label>عنوان الدرس</label>
+          <input type="text" class="inp" id="lesson-title" placeholder="مثال: الدرس الأول - المقدمة">
+        </div>
+        <div class="form-group">
+          <label>نص/شرح الدرس (اختياري)</label>
+          <textarea class="inp" id="lesson-content" rows="4" placeholder="اكتب هنا أي شرح أو ملاحظات نصية للطالب، هتظهر فوق فيديوهات الدرس"></textarea>
+        </div>
+        <div style="display:flex; gap:12px;">
+          <button class="btn btn-primary" id="lesson-save-btn" onclick="saveLesson()">💾 حفظ الدرس</button>
+          <button class="btn btn-secondary" id="lesson-cancel-btn" style="display:none;" onclick="resetLessonForm()">إلغاء التعديل</button>
+        </div>
+      </div>
+    </div>
+
     <div id="videos-wrap" style="display:none; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:32px; margin-top:32px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <h2 style="font-size:1.2rem;">🎥 فيديوهات: <span id="videos-unit-title"></span></h2>
@@ -68,6 +96,12 @@
         <div class="form-group">
           <label>عنوان الفيديو</label>
           <input type="text" class="inp" id="video-title" placeholder="مثال: الدرس الأول">
+        </div>
+        <div class="form-group">
+          <label>الدرس (اختياري)</label>
+          <select class="inp" id="video-lesson-select">
+            <option value="">بدون درس محدد (محتوى عام)</option>
+          </select>
         </div>
 
         <div style="display:flex; gap:8px; margin-bottom:12px;">

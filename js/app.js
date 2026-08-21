@@ -190,6 +190,7 @@ async function loadUnitsList() {
           <h3 style="margin-top:12px;">${escapeHtmlAdmin(u.title)}</h3>
           <p>${escapeHtmlAdmin(u.description || 'بدون وصف')}</p>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openLessonsPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">📖 الدروس</button>
             <button class="btn btn-secondary btn-sm" onclick="openVideosPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🎥 الفيديوهات</button>
             <button class="btn btn-secondary btn-sm" onclick="openVocabPanel('${u.id}', '${escapeHtmlAdmin(u.title)}')">🔊 القاموس</button>
             ${u.status === 'published'
@@ -257,6 +258,102 @@ function escapeHtmlAdmin(str) {
   return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Units / Courses — lessons (title + text content; videos/presentations get grouped under these)
+let currentLessonsUnitId = null;
+
+function openLessonsPanel(unitId, unitTitle) {
+  currentLessonsUnitId = unitId;
+  document.getElementById('lessons-wrap').style.display = 'block';
+  document.getElementById('lessons-unit-title').textContent = unitTitle;
+  resetLessonForm();
+  loadLessonsForUnit();
+  document.getElementById('lessons-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeLessonsPanel() {
+  currentLessonsUnitId = null;
+  document.getElementById('lessons-wrap').style.display = 'none';
+}
+function resetLessonForm() {
+  document.getElementById('lesson-edit-id').value = '';
+  document.getElementById('lesson-title').value = '';
+  document.getElementById('lesson-content').value = '';
+  document.getElementById('lesson-save-btn').textContent = '💾 حفظ الدرس';
+  document.getElementById('lesson-cancel-btn').style.display = 'none';
+}
+let currentLessonsCache = [];
+async function loadLessonsForUnit() {
+  if (!currentLessonsUnitId) return;
+  const list = document.getElementById('lessons-list');
+  list.innerHTML = '⏳ جاري التحميل...';
+  try {
+    const res = await api('/lessons/unit/' + currentLessonsUnitId);
+    const lessons = res && res.data ? res.data : [];
+    currentLessonsCache = lessons;
+    populateVideoLessonSelect_(lessons);
+    if (!lessons.length) {
+      list.innerHTML = '<p style="color:var(--text-muted);">مفيش دروس اتضافت لسه — أضف أول درس تحت.</p>';
+      return;
+    }
+    list.innerHTML = lessons.map(l => `
+      <div style="padding:12px 16px; border:1px solid var(--border); border-radius:var(--radius-md);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>${escapeHtmlAdmin(l.title)}</strong>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="editLesson('${l.id}')">✏️ تعديل</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteLesson('${l.id}')">🗑</button>
+          </div>
+        </div>
+        ${l.content ? `<p style="color:var(--text-secondary); font-size:0.85rem; margin-top:6px; white-space:pre-wrap;">${escapeHtmlAdmin(l.content)}</p>` : ''}
+        <p style="color:var(--text-muted); font-size:0.75rem; margin-top:6px;">🎥 ${(l.videos || []).length} فيديو &nbsp; 📊 ${(l.presentations || []).length} عرض</p>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+function editLesson(id) {
+  const l = currentLessonsCache.find(x => x.id === id);
+  if (!l) return;
+  document.getElementById('lesson-edit-id').value = l.id;
+  document.getElementById('lesson-title').value = l.title || '';
+  document.getElementById('lesson-content').value = l.content || '';
+  document.getElementById('lesson-save-btn').textContent = '💾 حفظ التعديل';
+  document.getElementById('lesson-cancel-btn').style.display = 'inline-block';
+  document.getElementById('lessons-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+async function saveLesson() {
+  const id = document.getElementById('lesson-edit-id').value;
+  const title = document.getElementById('lesson-title')?.value.trim();
+  const content = document.getElementById('lesson-content')?.value.trim();
+  if (!currentLessonsUnitId) return;
+  if (!title) { toast('❌ اكتب عنوان الدرس'); return; }
+  try {
+    const res = id
+      ? await api('/lessons/' + id, { method: 'PATCH', body: JSON.stringify({ title, content }) })
+      : await api('/lessons', { method: 'POST', body: JSON.stringify({ unitId: currentLessonsUnitId, title, content }) });
+    if (res && res.ok) {
+      toast(id ? '✅ تم تعديل الدرس' : '✅ تم إضافة الدرس');
+      resetLessonForm();
+      loadLessonsForUnit();
+    } else {
+      toast('❌ ' + (res?.error || 'فشل حفظ الدرس'));
+    }
+  } catch (e) {}
+}
+async function deleteLesson(id) {
+  if (!confirm('حذف الدرس مش هيمسح الفيديوهات جواه، بس هترجع لقسم "محتوى عام". متأكد؟')) return;
+  try {
+    const res = await api('/lessons/' + id, { method: 'DELETE' });
+    if (res && res.ok) { toast('✅ تم حذف الدرس'); loadLessonsForUnit(); }
+  } catch (e) {}
+}
+function populateVideoLessonSelect_(lessons) {
+  const sel = document.getElementById('video-lesson-select');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">بدون درس محدد (محتوى عام)</option>' +
+    lessons.map(l => `<option value="${l.id}">${escapeHtmlAdmin(l.title)}</option>`).join('');
+  sel.value = current || '';
+}
+
 // Units / Courses — videos
 let currentVideosUnitId = null;
 
@@ -266,6 +363,8 @@ function openVideosPanel(unitId, unitTitle) {
   document.getElementById('videos-unit-title').textContent = unitTitle;
   setVideoMode('upload');
   loadVideosForUnit();
+  // Keep the lesson dropdown in sync even if the Lessons panel was never opened this visit
+  api('/lessons/unit/' + unitId).then(res => populateVideoLessonSelect_(res && res.data ? res.data : [])).catch(() => {});
   document.getElementById('videos-wrap').scrollIntoView({ behavior: 'smooth' });
 }
 function closeVideosPanel() {
@@ -427,6 +526,7 @@ async function uploadVideo() {
       method: 'POST',
       body: JSON.stringify({
         unitId: currentVideosUnitId,
+        lessonId: document.getElementById('video-lesson-select')?.value || '',
         title,
         driveFileId: uploadRes.data.driveFileId,
         driveUrl: uploadRes.data.previewUrl || uploadRes.data.driveUrl
@@ -459,7 +559,12 @@ async function addVideoByLink() {
   try {
     const res = await api('/videos', {
       method: 'POST',
-      body: JSON.stringify({ unitId: currentVideosUnitId, title, driveUrl: link })
+      body: JSON.stringify({
+        unitId: currentVideosUnitId,
+        lessonId: document.getElementById('video-lesson-select')?.value || '',
+        title,
+        driveUrl: link
+      })
     });
     if (res && res.ok) {
       toast('✅ تم إضافة الفيديو');
@@ -1022,6 +1127,7 @@ async function loadUnitExams() {
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn btn-secondary btn-sm" onclick="openQuestionsPanel('${e.id}', '${escapeHtmlAdmin(e.title)}')">❓ الأسئلة</button>
+          <button class="btn btn-secondary btn-sm" onclick="openLoadTestPanel('${e.id}', '${escapeHtmlAdmin(e.title)}')">🧪 جرّب الموقع</button>
           ${e.status === 'published'
             ? `<button class="btn btn-secondary btn-sm" onclick="hideExam('${e.id}')">🙈 إخفاء</button>`
             : `<button class="btn btn-primary btn-sm" onclick="publishExam('${e.id}')">🚀 نشر</button>`}
@@ -1033,6 +1139,92 @@ async function loadUnitExams() {
         </div>
       </div>
     `).join('');
+  } catch (e) {}
+}
+
+// Load test — simulate N students taking one exam from this single page
+let currentLoadTestExamId = null;
+let currentLoadTestJobId = null;
+let loadTestPollTimer = null;
+
+function openLoadTestPanel(examId, examTitle) {
+  currentLoadTestExamId = examId;
+  currentLoadTestJobId = null;
+  if (loadTestPollTimer) clearInterval(loadTestPollTimer);
+  document.getElementById('loadtest-wrap').style.display = 'block';
+  document.getElementById('loadtest-exam-title').textContent = examTitle;
+  document.getElementById('loadtest-count').value = 100;
+  document.getElementById('loadtest-results').innerHTML = '';
+  document.getElementById('loadtest-cleanup-btn').style.display = 'none';
+  document.getElementById('loadtest-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+function closeLoadTestPanel() {
+  if (loadTestPollTimer) clearInterval(loadTestPollTimer);
+  document.getElementById('loadtest-wrap').style.display = 'none';
+}
+
+async function startLoadTest() {
+  const count = parseInt(document.getElementById('loadtest-count')?.value, 10) || 0;
+  if (!currentLoadTestExamId) return;
+  if (count <= 0) { toast('❌ اختار عدد صحيح'); return; }
+  const results = document.getElementById('loadtest-results');
+  results.innerHTML = `⏳ جاري تسجيل وتشغيل ${count} حساب تجريبي... ده هياخد شوية وقت حسب العدد.`;
+  document.getElementById('loadtest-cleanup-btn').style.display = 'none';
+  try {
+    const res = await api('/loadtest/run', {
+      method: 'POST',
+      body: JSON.stringify({ examId: currentLoadTestExamId, count })
+    });
+    if (!res || !res.ok) { toast('❌ ' + (res?.error || 'فشل بدء الاختبار')); return; }
+    currentLoadTestJobId = res.data.jobId;
+    if (loadTestPollTimer) clearInterval(loadTestPollTimer);
+    loadTestPollTimer = setInterval(pollLoadTest, 1500);
+    pollLoadTest();
+  } catch (e) {}
+}
+
+async function pollLoadTest() {
+  if (!currentLoadTestJobId) return;
+  const results = document.getElementById('loadtest-results');
+  try {
+    const res = await api('/loadtest/status/' + currentLoadTestJobId);
+    if (!res || !res.ok) return;
+    const job = res.data;
+    if (job.fatalError) {
+      results.innerHTML = `❌ حصل خطأ: ${escapeHtmlAdmin(job.fatalError)}`;
+      clearInterval(loadTestPollTimer);
+      return;
+    }
+    if (job.running) {
+      results.innerHTML = `⏳ ${job.completed} / ${job.total} خلصوا لحد دلوقتي...`;
+      return;
+    }
+    clearInterval(loadTestPollTimer);
+    const s = job.summary || {};
+    results.innerHTML = `
+      <div style="padding:16px; background:var(--bg); border-radius:var(--radius-md); margin-bottom:12px;">
+        <p>✅ خلص الاختبار: ${s.succeeded || 0} من ${s.requested || job.total} محاولة نجحت (${s.failed || 0} فشلوا).</p>
+        <p>📊 متوسط الدرجات: ${s.averagePercentage ?? 0}% — نسبة النجاح: ${s.passRate ?? 0}%</p>
+        <p>⏱ استغرق: ${Math.round((s.tookMs || 0) / 1000)} ثانية</p>
+        <p style="color:var(--text-muted); font-size:0.85rem;">هتلاقي النتائج والمتصدرين اتحدثوا فعليًا في صفحة النتائج والـ Google Sheet.</p>
+      </div>`;
+    document.getElementById('loadtest-cleanup-btn').style.display = 'inline-block';
+  } catch (e) {}
+}
+
+async function cleanupLoadTest() {
+  if (!currentLoadTestJobId) return;
+  if (!confirm('هيتمسح كل الحسابات والمحاولات التجريبية اللي الاختبار ده عمله. متأكد؟')) return;
+  try {
+    const res = await api('/loadtest/' + currentLoadTestJobId, { method: 'DELETE' });
+    if (res && res.ok) {
+      toast('✅ اتمسحت بيانات الاختبار');
+      document.getElementById('loadtest-results').innerHTML = '';
+      document.getElementById('loadtest-cleanup-btn').style.display = 'none';
+      currentLoadTestJobId = null;
+    } else {
+      toast('❌ ' + (res?.error || 'فشل المسح'));
+    }
   } catch (e) {}
 }
 

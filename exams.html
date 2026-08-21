@@ -203,6 +203,25 @@
     </div>
   </div>
 
+  <div id="loadtest-wrap" style="display:none; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:32px; margin-top:32px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <h2 style="font-size:1.2rem;">🧪 جرّب الموقع: <span id="loadtest-exam-title"></span></h2>
+      <button class="btn btn-secondary btn-sm" onclick="closeLoadTestPanel()">✕ إغلاق</button>
+    </div>
+    <p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:20px;">
+      اختار عدد، وهيتعمل تلقائيًا: تسجيل بهذا العدد من الحسابات + دخول الامتحان + إجابة وتسليم — كله من الصفحة دي من غير ما تفتح أي حساب يدويًا. مفيد عشان تتأكد إن الموقع بيستحمل عدد كبير من الطلاب مع بعض.
+    </p>
+    <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+      <div class="form-group" style="margin:0;">
+        <label>عدد الحسابات (لحد 500)</label>
+        <input type="number" class="inp" id="loadtest-count" value="100" min="1" max="500" style="max-width:160px;">
+      </div>
+      <button class="btn btn-primary" onclick="startLoadTest()">🚀 ابدأ الاختبار</button>
+      <button class="btn btn-danger" id="loadtest-cleanup-btn" style="display:none;" onclick="cleanupLoadTest()">🗑 امسح بيانات الاختبار ده</button>
+    </div>
+    <div id="loadtest-results" style="margin-top:16px;"></div>
+  </div>
+
   <script src="js/app.js"></script>
 </body>
 </html>
