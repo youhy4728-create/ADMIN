@@ -43,11 +43,40 @@
         <label>عنوان العرض</label>
         <input type="text" id="pres-title" class="inp" placeholder="مثال: الدرس الأول - المقدمة">
       </div>
-      <div class="form-group">
-        <label>ملف البوربوينت (.pptx / .ppt)</label>
-        <input type="file" id="pres-file" class="inp" accept=".ppt,.pptx,.pdf">
+
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <button class="btn btn-sm btn-primary" id="pres-mode-upload-btn" onclick="setPresMode('upload')">⬆️ رفع ملف</button>
+        <button class="btn btn-sm btn-secondary" id="pres-mode-link-btn" onclick="setPresMode('link')">🔗 لينك جاهز</button>
       </div>
-      <button class="btn btn-primary" style="width:100%;" onclick="uploadPresentation()">⬆️ رفع العرض</button>
+
+      <div id="pres-mode-upload">
+        <div class="form-group">
+          <label>ملف البوربوينت (.pptx / .ppt)</label>
+          <input type="file" id="pres-file" class="inp" accept=".ppt,.pptx,.pdf">
+        </div>
+        <p style="color:var(--text-muted); font-size:0.8rem; margin-bottom:12px;">
+          ⚠️ الملفات الكبيرة (فوق ~50 ميجا) ممكن تفشل من هنا — ارفعها بنفسك على Google Drive
+          وحط اللينك من "🔗 لينك جاهز" جنبها بدل كده.
+        </p>
+        <button class="btn btn-primary" style="width:100%;" onclick="uploadPresentation()">⬆️ رفع العرض</button>
+      </div>
+
+      <div id="pres-mode-link" style="display:none;">
+        <div class="form-group">
+          <label>لينك ملف Drive (بعد ما تشيله "Anyone with the link")</label>
+          <input type="text" id="pres-link" class="inp" placeholder="https://drive.google.com/file/d/....../view?usp=sharing">
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; margin-bottom:16px; cursor:pointer;">
+          <input type="checkbox" id="pres-has-embedded-video">
+          <span style="font-size:0.85rem;">العرض فيه فيديو مدمج جوه السلايدات وعايزه يشتغل للطالب</span>
+        </label>
+        <p style="color:var(--text-muted); font-size:0.78rem; margin-bottom:12px;">
+          لو حطيت علامة صح: هنعرض العرض بعارض مايكروسوفت (Office Viewer) بدل عارض جوجل، لأنه
+          الوحيد اللي بيقدر يشغّل الفيديو المدمج جوه السلايد. مش مضمون 100% مع كل أنواع الفيديو،
+          بس ده أفضل حل متاح من غير ما نلمس الملف الأصلي أو نحاول نفك حمايته.
+        </p>
+        <button class="btn btn-primary" style="width:100%;" onclick="addPresentationByLink()">➕ إضافة بالرابط</button>
+      </div>
     </div>
 
     <h3 style="margin-bottom:14px;">العروض الحالية للكورس المختار</h3>

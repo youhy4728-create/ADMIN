@@ -908,7 +908,63 @@ function closeReviewModal() {
 }
 
 // Presentations (PowerPoint) management
+function setPresMode(mode) {
+  document.getElementById('pres-mode-upload').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('pres-mode-link').style.display = mode === 'link' ? 'block' : 'none';
+  document.getElementById('pres-mode-upload-btn').className = 'btn btn-sm ' + (mode === 'upload' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('pres-mode-link-btn').className = 'btn btn-sm ' + (mode === 'link' ? 'btn-primary' : 'btn-secondary');
+}
+
+// Pulls the file id out of any of Drive's common share-link shapes:
+//   .../file/d/FILEID/view?usp=sharing   .../open?id=FILEID   .../d/FILEID
+function extractDriveFileId_(url) {
+  const patterns = [/\/d\/([a-zA-Z0-9_-]{10,})/, /[?&]id=([a-zA-Z0-9_-]{10,})/];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+async function addPresentationByLink() {
+  const unitId = document.getElementById('pres-unit')?.value;
+  const title = document.getElementById('pres-title')?.value.trim();
+  const link = document.getElementById('pres-link')?.value.trim();
+  const hasEmbeddedVideo = document.getElementById('pres-has-embedded-video')?.checked;
+  if (!unitId) { toast('❌ اختر الكورس أولاً'); return; }
+  if (!title) { toast('❌ اكتب عنوان العرض'); return; }
+  if (!link) { toast('❌ الصق لينك الملف'); return; }
+
+  const fileId = extractDriveFileId_(link);
+  if (!fileId) { toast('❌ الرابط ده مش شكل رابط Google Drive عادي'); return; }
+
+  const driveUrl = hasEmbeddedVideo
+    // Office Viewer actually renders the real PowerPoint (embedded video
+    // included, where the format allows it) instead of converting slides
+    // to static images the way Drive's own preview does.
+    ? 'https://view.officeapps.live.com/op/embed.aspx?src=' +
+      encodeURIComponent('https://drive.google.com/uc?export=download&id=' + fileId)
+    : 'https://drive.google.com/file/d/' + fileId + '/preview';
+
+  try {
+    const created = await api('/presentations', {
+      method: 'POST',
+      body: JSON.stringify({ unitId, title, driveUrl })
+    });
+    if (created.ok) {
+      toast('✅ تم إضافة العرض');
+      document.getElementById('pres-title').value = '';
+      document.getElementById('pres-link').value = '';
+      document.getElementById('pres-has-embedded-video').checked = false;
+      loadPresentationsList(unitId);
+    } else {
+      toast('❌ ' + (created.error || 'فشل حفظ العرض'));
+    }
+  } catch (e) {}
+}
+
 async function loadPresentationsPage() {
+  setPresMode('upload');
   try {
     const units = (await api('/units')).data || [];
     const select = document.getElementById('pres-unit');
