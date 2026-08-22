@@ -926,6 +926,24 @@ function extractDriveFileId_(url) {
   return null;
 }
 
+// Dropbox share links default to a preview page (?dl=0). Forcing dl=1 (or
+// raw=1) makes Dropbox serve the actual file bytes directly, no interstitial
+// page, no file-size cutoff like Drive's virus-scan warning — this is what
+// makes Dropbox a free fallback for a big embedded-video file that's too
+// large for the Google Drive + Office Viewer combo above.
+function normalizeDropboxLink_(url) {
+  if (!/dropbox\.com/.test(url)) return null;
+  let raw = url.replace(/([?&])dl=0\b/, '$1dl=1');
+  if (!/[?&](dl|raw)=1\b/.test(raw)) {
+    raw += (raw.includes('?') ? '&' : '?') + 'dl=1';
+  }
+  return raw;
+}
+
+function officeViewerEmbed_(rawFileUrl) {
+  return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(rawFileUrl);
+}
+
 async function addPresentationByLink() {
   const unitId = document.getElementById('pres-unit')?.value;
   const title = document.getElementById('pres-title')?.value.trim();
@@ -935,16 +953,28 @@ async function addPresentationByLink() {
   if (!title) { toast('❌ اكتب عنوان العرض'); return; }
   if (!link) { toast('❌ الصق لينك الملف'); return; }
 
-  const fileId = extractDriveFileId_(link);
-  if (!fileId) { toast('❌ الرابط ده مش شكل رابط Google Drive عادي'); return; }
+  const driveFileId = extractDriveFileId_(link);
+  const dropboxRawUrl = !driveFileId ? normalizeDropboxLink_(link) : null;
 
-  const driveUrl = hasEmbeddedVideo
-    // Office Viewer actually renders the real PowerPoint (embedded video
-    // included, where the format allows it) instead of converting slides
-    // to static images the way Drive's own preview does.
-    ? 'https://view.officeapps.live.com/op/embed.aspx?src=' +
-      encodeURIComponent('https://drive.google.com/uc?export=download&id=' + fileId)
-    : 'https://drive.google.com/file/d/' + fileId + '/preview';
+  let driveUrl;
+  if (driveFileId) {
+    // NOTE: Office Viewer only works here for files small enough that Drive
+    // serves them without its "can't scan this file, too big" warning page
+    // (roughly under ~25MB) — above that, use the Dropbox branch instead.
+    driveUrl = hasEmbeddedVideo
+      ? officeViewerEmbed_('https://drive.google.com/uc?export=download&id=' + driveFileId)
+      : 'https://drive.google.com/file/d/' + driveFileId + '/preview';
+  } else if (dropboxRawUrl) {
+    // Dropbox has no Drive-style size cutoff on direct file links (free
+    // tier, up to its storage quota) — the free option for a big
+    // embedded-video file that's too large for the Drive route.
+    driveUrl = hasEmbeddedVideo ? officeViewerEmbed_(dropboxRawUrl) : dropboxRawUrl;
+  } else {
+    // Not a Drive or Dropbox link — assume it's already a ready-to-embed URL
+    // (e.g. a OneDrive "Embed" link, or any other host's embed iframe src)
+    // and use it exactly as pasted, no transformation.
+    driveUrl = link;
+  }
 
   try {
     const created = await api('/presentations', {
