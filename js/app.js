@@ -940,8 +940,18 @@ function normalizeDropboxLink_(url) {
   return raw;
 }
 
-function officeViewerEmbed_(rawFileUrl) {
-  return 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(rawFileUrl);
+// office viewer (view.officeapps.live.com) had its own hard file-size cap
+// that fired regardless of host (Drive, Dropbox, ...) — dropped in favor of
+// Google Slides' own embed, which serves Google's converted copy instead of
+// proxying the raw file, so that cap doesn't apply.
+function slidesEmbedUrl_(slidesId) {
+  return 'https://docs.google.com/presentation/d/' + slidesId + '/embed?start=false&loop=false&delayms=3000';
+}
+
+// Matches a Google Slides link, e.g. .../presentation/d/SLIDES_ID/edit
+function extractSlidesId_(url) {
+  const m = url.match(/\/presentation\/d\/([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : null;
 }
 
 async function addPresentationByLink() {
@@ -953,27 +963,31 @@ async function addPresentationByLink() {
   if (!title) { toast('❌ اكتب عنوان العرض'); return; }
   if (!link) { toast('❌ الصق لينك الملف'); return; }
 
-  const driveFileId = extractDriveFileId_(link);
-  const dropboxRawUrl = !driveFileId ? normalizeDropboxLink_(link) : null;
-
   let driveUrl;
-  if (driveFileId) {
-    // NOTE: Office Viewer only works here for files small enough that Drive
-    // serves them without its "can't scan this file, too big" warning page
-    // (roughly under ~25MB) — above that, use the Dropbox branch instead.
-    driveUrl = hasEmbeddedVideo
-      ? officeViewerEmbed_('https://drive.google.com/uc?export=download&id=' + driveFileId)
-      : 'https://drive.google.com/file/d/' + driveFileId + '/preview';
-  } else if (dropboxRawUrl) {
-    // Dropbox has no Drive-style size cutoff on direct file links (free
-    // tier, up to its storage quota) — the free option for a big
-    // embedded-video file that's too large for the Drive route.
-    driveUrl = hasEmbeddedVideo ? officeViewerEmbed_(dropboxRawUrl) : dropboxRawUrl;
+  if (hasEmbeddedVideo) {
+    // Expects a Google Slides share link here, not a raw file link — see
+    // the instructions panel above the checkbox.
+    const slidesId = extractSlidesId_(link);
+    if (!slidesId) {
+      toast('❌ ده مش لينك Google Slides — حوّل الملف لـ Slides الأول وحط لينكه هنا');
+      return;
+    }
+    driveUrl = slidesEmbedUrl_(slidesId);
   } else {
-    // Not a Drive or Dropbox link — assume it's already a ready-to-embed URL
-    // (e.g. a OneDrive "Embed" link, or any other host's embed iframe src)
-    // and use it exactly as pasted, no transformation.
-    driveUrl = link;
+    const driveFileId = extractDriveFileId_(link);
+    const dropboxRawUrl = !driveFileId ? normalizeDropboxLink_(link) : null;
+    if (driveFileId) {
+      driveUrl = 'https://drive.google.com/file/d/' + driveFileId + '/preview';
+    } else if (dropboxRawUrl) {
+      // Dropbox has no Drive-style size cutoff on direct file links (free
+      // tier, up to its storage quota) — a free fallback for a big file
+      // when there's no embedded video to worry about.
+      driveUrl = dropboxRawUrl;
+    } else {
+      // Not a Drive or Dropbox link — assume it's already a ready-to-embed
+      // URL and use it exactly as pasted, no transformation.
+      driveUrl = link;
+    }
   }
 
   try {
